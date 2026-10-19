@@ -1,0 +1,13 @@
+# Path: backend/Dockerfile.dockerignore
+# Build only the Go service; exclude local artifacts and secrets.
+.git/
+.env
+.env.*
+*.log
+*.test
+coverage.out
+coverage/
+bin/
+dist/
+tmp/
+.DS_Store

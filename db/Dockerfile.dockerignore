@@ -1,0 +1,10 @@
+# Path: db/Dockerfile.dockerignore
+# Preserve schema.sql for the PostgreSQL initialization image.
+.git/
+.env
+.env.*
+.DS_Store
+*.log
+*.dump
+*.backup
+*.bak

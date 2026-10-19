@@ -1,0 +1,12 @@
+# Path: frontend/Dockerfile.dockerignore
+# Only frontend source is included in the frontend build context.
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+.git/
+.DS_Store
+*.log
+npm-debug.log*

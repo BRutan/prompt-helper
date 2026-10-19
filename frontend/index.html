@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0c1220" />
+    <title>Prompterr | context-efficient file diffs</title>
+  </head>
+  <body>
+    <div class="app">
+      <header>
+        <div class="header-left">
+          <div class="mark">P</div>
+          <div><div class="overline">VERSION-AWARE SOURCE INGESTION</div><h1>prompterr</h1></div>
+        </div>
+        <span class="pill"><span class="dot"></span>Local-only workspace</span>
+      </header>
+      <main>
+        <section class="intro">
+          <h2>Send the changes. <em>Not the whole file.</em></h2>
+          <p>Paste a complete text file with a valid <code>Path:</code> comment. The first submission is the baseline; later submissions return only changed lines, numbered for LLMs.</p>
+        </section>
+        <div class="main-grid">
+          <section class="panel editor-panel">
+            <div class="panel-head"><div><h3>File input</h3><p>Complete source file · UTF-8 · max 2 MiB by default</p></div><span id="input-lang" class="tag">Awaiting source</span></div>
+            <div class="examples">Header examples:
+              <button type="button" data-example="ts">TypeScript</button>
+              <button type="button" data-example="py">Python</button>
+              <button type="button" data-example="sql">SQL</button>
+              <button type="button" data-example="css">CSS</button>
+            </div>
+            <label for="source">Paste source code</label>
+            <textarea id="source" spellcheck="false" aria-describedby="input-help" placeholder="// Path: src/components/App.tsx&#10;export function App() {&#10;  return 'hello';&#10;}"></textarea>
+            <p id="input-help" class="hint">The first line must be an extension-appropriate comment with <code>Path:</code> and a directory-qualified filename. A shebang may come before it.</p>
+            <div class="actions"><button id="submit" class="primary" type="button">Store &amp; compare <span>⌘ ↵</span></button><span id="input-count">0 chars</span></div>
+            <div id="error" role="alert" class="error" hidden></div>
+          </section>
+          <section class="panel result-panel">
+            <div class="panel-head"><div><h3>Optimized diff</h3><p>Numbered context, additions and removals</p></div><button id="copy" class="secondary" type="button" disabled>Copy for LLM</button></div>
+            <div class="result-details"><div class="detail"><span>Status</span><strong id="result-status">No comparison yet</strong></div><div class="detail"><span>Version</span><strong id="result-version">—</strong></div><div class="detail"><span>Change</span><strong id="result-count">—</strong></div></div>
+            <div id="result-path" class="result-path">Submit a file to create its baseline.</div>
+            <div class="diff-container"><div id="diff" class="diff-empty">Changed lines will appear here with old and new line numbers in the gutter.</div></div>
+            <p class="hint">Identical files create no new revision. Added lines show their new line number; removed lines show their old line number.</p>
+          </section>
+        </div>
+        <section class="panel history-panel"><div class="panel-head"><div><h3>Recent files</h3><p>Indexed by extension · click a file to inspect its current version</p></div><div class="filters"><input id="extension" aria-label="Filter by extension" placeholder=".tsx"/><button id="refresh" class="secondary">Refresh</button></div></div><div id="recent" class="recent"><span class="muted">Loading…</span></div></section>
+      </main>
+      <footer>Prompterr · all services communicate over <code>prompterr-backend</code> · files are never read from your machine's path.</footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
