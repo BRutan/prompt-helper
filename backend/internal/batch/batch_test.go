@@ -58,7 +58,6 @@ func TestSafety(t *testing.T) {
 		strings.Replace(valid, "FILE: App/ContentView.swift", "FILE: ../secrets.swift", 1),
 		strings.Replace(valid, "FILE: App/ContentView.swift", "FILE: /tmp/secrets.swift", 1),
 		strings.Replace(valid, "FILE: App/ContentView.swift", "FILE: Components/View/Another.swift", 1),
-		strings.Replace(valid, "// Path: scro-frontend/scro-mobile/scro-ios/scro-ios/App/ContentView.swift", "// Path: unrelated/Other.swift", 1),
 	} {
 		if _, err := Parse(input); err == nil {
 			t.Fatal("accepted unsafe input")
@@ -81,5 +80,18 @@ func TestLargeFilesAndManySections(t *testing.T) {
 	files, err = Parse(many.String())
 	if err != nil || len(files) != 501 {
 		t.Fatalf("multiple files: got %d err=%v", len(files), err)
+	}
+}
+
+func TestFrameOverridesPathHeader(t *testing.T) {
+	input := "================================================================================\nSOURCE_DIR: /src\nFILE: app/admin/credit-risk/page.tsx\n================================================================================\n\n\"use client\";\nexport default function Page() { return null; }\n"
+	sections, err := Parse(input)
+	if err != nil || len(sections) != 1 || sections[0].Path != "/src/app/admin/credit-risk/page.tsx" || sections[0].Extension != ".tsx" {
+		t.Fatalf("sections=%+v err=%v", sections, err)
+	}
+	conflicting := strings.Replace(input, "\"use client\";", "// Path: unrelated/page.tsx", 1)
+	sections, err = Parse(conflicting)
+	if err != nil || len(sections) != 1 || sections[0].Path != "/src/app/admin/credit-risk/page.tsx" {
+		t.Fatalf("frame should override Path: sections=%+v err=%v", sections, err)
 	}
 }

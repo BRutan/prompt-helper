@@ -62,12 +62,10 @@ func Parse(content string) ([]Section, error) {
 		body = strings.TrimPrefix(body, "\n")
 		// Remove separator-only trailing blank lines; keep a terminal LF.
 		body = strings.TrimRight(body, "\r\n") + "\n"
-		annotated, err := header.Parse(body)
+		// The frame is the source of truth; Path: is optional or advisory.
+		annotated, err := header.ParseForPath(body, fullPath)
 		if err != nil {
 			return nil, fmt.Errorf("section %d (%s): %w", i+1, fullPath, err)
-		}
-		if annotated.Path != fullPath && !strings.HasSuffix(fullPath, "/"+annotated.Path) {
-			return nil, fmt.Errorf("section %d: embedded Path: %q does not match SOURCE_DIR + FILE %q", i+1, annotated.Path, fullPath)
 		}
 		output = append(output, Section{Path: fullPath, Extension: annotated.Extension, Content: body})
 	}

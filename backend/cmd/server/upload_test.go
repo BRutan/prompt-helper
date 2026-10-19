@@ -38,7 +38,20 @@ func TestUploadedPlainPath(t *testing.T) {
 	if err != nil || file.Path != wanted || file.Extension != ".py" {
 		t.Fatalf("file=%+v err=%v", file, err)
 	}
-	if _, err := parseUploadedSource(content, "/Users/example/repo/scripts/other.py"); err == nil {
-		t.Fatal("plain Path: must match SOURCE_DIR / FILE identity")
+	other, err := parseUploadedSource(content, "/Users/example/repo/scripts/other.py")
+	if err != nil || other.Path != "/Users/example/repo/scripts/other.py" {
+		t.Fatalf("frame should override Path comment: file=%+v err=%v", other, err)
+	}
+}
+
+func TestUploadedFrameWithoutPathComment(t *testing.T) {
+	content := "\"use client\";\nexport default function Page() { return null; }\n"
+	wanted := "/Users/example/repo/src/app/admin/credit-risk/page.tsx"
+	file, err := parseUploadedSource(content, wanted)
+	if err != nil || file.Path != wanted || file.Extension != ".tsx" {
+		t.Fatalf("file=%+v err=%v", file, err)
+	}
+	if _, err := parseUploadedSource(content, ""); err == nil {
+		t.Fatal("unframed source without Path header must still fail")
 	}
 }

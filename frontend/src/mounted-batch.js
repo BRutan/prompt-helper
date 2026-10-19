@@ -19,8 +19,8 @@ function cleanPath(value, label) {
   return out;
 }
 
-// Each section starts with a bare Path: line or an extension-specific
-// Path: comment. The original source bytes are archived and compared intact.
+// SOURCE_DIR + FILE are authoritative for framed dumps. Embedded Path headers
+// are optional and never override the frame identity or change source bytes.
 export function parseMultiFileDump(text) {
   FRAME.lastIndex = 0;
   const matches = [...text.matchAll(FRAME)];
@@ -38,14 +38,6 @@ export function parseMultiFileDump(text) {
     const next = i + 1 < matches.length ? matches[i + 1].index : text.length;
     const raw = text.slice(match.index + match[0].length, next);
     const source = raw.replace(/^\r?\n/, '').replace(/[\r\n]+$/, '') + '\n';
-    const lines = source.replace(/^\uFEFF/, '').split(/\r?\n/);
-    const first = lines[0].startsWith('#!') ? lines[1] || '' : lines[0];
-    const header = first.match(/^(?:(?:<!--|\/\*|\/\/|--|#)[ \t]+)?Path:[ \t]+(.+?)\s*$/);
-    if (!header) throw Error(`Section ${i + 1} (${path}): missing a Path: header (plain or commented).`);
-    const embedded = header[1].replace(/(?:\s*\*\/|\s*-->)$/, '').trim();
-    if (path !== embedded && !path.endsWith('/' + embedded)) {
-      throw Error(`Section ${i + 1}: Path: ${embedded} disagrees with ${path}`);
-    }
     return { path, source, bytes: encoder.encode(source).byteLength };
   });
 }

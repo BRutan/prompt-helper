@@ -2,6 +2,7 @@
 import './style.css';
 import './input-controls.css';
 import { countFramedFiles } from './input-preview.js';
+import { findPathHeader } from './path-identity.js';
 import { renderDiff } from './renderDiff.js';
 import { isMultiFileDump, parseMultiFileDump, mergeFileDiffResponses } from './mounted-batch.js';
 
@@ -100,12 +101,13 @@ for (const ext of ['.css','.scss','.less']) comments[ext] = ['/*','*/'];
 for (const ext of ['.html','.htm','.xml','.svg','.md','.mdx','.vue']) comments[ext] = ['<!--','-->'];
 
 function validate(input: string): { path: string; ext: string } {
-  // Only inspect the header; splitting a multi-megabyte input allocates huge arrays.
-  const raw = input.replace(/^\uFEFF/, '').slice(0, 4096).split('\n', 2);
-  const first = (raw[0] || '').startsWith('#!') ? raw[1] || '' : raw[0] || '';
-  const match = first.replace(/\r$/, '').match(/^(?:(<!--|\/\*|\/\/|--|#)[ \t]+)?Path:[ \t]+(.+?)\s*$/);
-  if (!match) throw new Error('Missing first-line header: Path: src/components/App.tsx (or // Path: ... / another supported comment format).');
-  let p = match[2].trim();
+  // SOURCE_DIR + FILE frames are checked before this function is called.
+  // For unframed input, recognize Path: at the start of ANY line, including
+  // pastes with a source-directory banner, blank lines, or a code fence.
+  // A supported comment prefix is also accepted. Keep the input unchanged.
+  const match = findPathHeader(input);
+  if (!match) throw new Error('No file identity found. Use Path: dir/file.py or // Path: dir/file.tsx on its own line, or SOURCE_DIR: + FILE: frames.');
+  let p = match.path;
   let ext = p.slice(p.lastIndexOf('.')).toLowerCase();
   if (/\/(?:Dockerfile(?:\.[^/]*)?|Makefile|GNUmakefile)$/i.test(p)) ext = '.mk';
   if (/\/(?:\.env(?:\.[^/]*)?|\.gitignore|\.dockerignore)$/.test(p)) ext = p.includes('/.env') ? '.env' : '.gitignore';
@@ -115,7 +117,7 @@ function validate(input: string): { path: string; ext: string } {
     if (!p.endsWith(spec[1])) throw new Error(`Expected a ${spec[0]} Path: ... ${spec[1]} header.`);
     p = p.slice(0, -spec[1].length).trim();
   }
-  if (match[1] && spec[0] !== match[1]) throw new Error(`.${ext.replace('.', '')} files must start with a '${spec[0]} Path: ...${spec[1] ? ` ${spec[1]}` : ''}' comment.`);
+  if (match.leader && spec[0] !== match.leader) throw new Error(`.${ext.replace('.', '')} files must start with a '${spec[0]} Path: ...${spec[1] ? ` ${spec[1]}` : ''}' comment.`);
   if (!p.includes('/') || p.includes('\\') || p.includes('/../') || p.includes('/./') || p.startsWith('../') || p.endsWith('/')) throw new Error('Path: must contain a complete directory-qualified slash-separated filename without traversal.');
   return { path: p, ext };
 }

@@ -45,8 +45,26 @@ test('mixed bare and commented Path headers retain their source', () => {
   assert.match(files[1].source, /^\/\/ Path: App\/View\.swift/);
 });
 
-test('plain Path mismatch still fails identity validation', () => {
-  assert.throws(() => parseMultiFileDump(
-    framed('scripts/expected.py', 'Path: scripts/unrelated.py\nprint(1)\n')),
-    /disagrees/);
+test('SOURCE_DIR + FILE overrides a conflicting embedded Path header', () => {
+  const [file] = parseMultiFileDump(framed('scripts/expected.py',
+    'Path: scripts/unrelated.py\nprint(1)\n'));
+  assert.equal(file.path, '/Users/example/repo/src/scripts/expected.py');
+  assert.match(file.source, /^Path: scripts\/unrelated.py/);
+});
+
+test('framed Next.js client component without Path header is accepted', () => {
+  const text = '"use client";\n\nimport { useState } from "react";\nexport default function Page() { return null; }\n';
+  const [file] = parseMultiFileDump(framed('app/admin/credit-risk/page.tsx', text));
+  assert.equal(file.path, '/Users/example/repo/src/app/admin/credit-risk/page.tsx');
+  assert.equal(file.source, text);
+});
+
+test('framed source with no Path header preserves empty lines and shebangs', () => {
+  const [file] = parseMultiFileDump(framed('scripts/run.py', '#!/usr/bin/env python3\n\nprint(1)\n'));
+  assert.equal(file.source, '#!/usr/bin/env python3\n\nprint(1)\n');
+});
+
+test('framed files still reject traversal, duplicates, and unsafe paths', () => {
+  assert.throws(() => parseMultiFileDump(framed('../private.py', 'print(1)')));
+  assert.throws(() => parseMultiFileDump(framed('app/a.tsx', 'x\n') + framed('app/a.tsx', 'y\n')));
 });

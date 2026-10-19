@@ -31,23 +31,14 @@ type app struct {
 	db *pgxpool.Pool
 }
 
-// Decode the embedded source header, then validate the optional absolute
-// SOURCE_DIR+FILE identity passed by the browser. The path is a DB key only.
+// An explicit absolute path is supplied by the browser only after it has
+// parsed a SOURCE_DIR + FILE frame. It takes precedence over any optional
+// Path: header in the source. Unframed single-file uploads remain strict.
 func parseUploadedSource(content, absolutePath string) (header.File, error) {
-	file, err := header.Parse(content)
-	if err != nil || absolutePath == "" {
-		return file, err
+	if absolutePath != "" {
+		return header.ParseForPath(content, absolutePath)
 	}
-	if !path.IsAbs(absolutePath) || path.Clean(absolutePath) != absolutePath ||
-		strings.ContainsAny(absolutePath, "\\\x00") || strings.Contains(absolutePath, "//") ||
-		strings.Contains(absolutePath, "://") || len(absolutePath) > 8192 {
-		return file, errors.New("path must be a clean absolute SOURCE_DIR + FILE name")
-	}
-	if absolutePath != file.Path && (path.IsAbs(file.Path) || !strings.HasSuffix(absolutePath, "/"+file.Path)) {
-		return file, fmt.Errorf("embedded Path: %q does not agree with %q", file.Path, absolutePath)
-	}
-	file.Path = absolutePath
-	return file, nil
+	return header.Parse(content)
 }
 
 type diffRequest struct {
