@@ -31,6 +31,25 @@ type app struct {
 	db *pgxpool.Pool
 }
 
+// Decode the embedded source header, then validate the optional absolute
+// SOURCE_DIR+FILE identity passed by the browser. The path is a DB key only.
+func parseUploadedSource(content, absolutePath string) (header.File, error) {
+	file, err := header.Parse(content)
+	if err != nil || absolutePath == "" {
+		return file, err
+	}
+	if !path.IsAbs(absolutePath) || path.Clean(absolutePath) != absolutePath ||
+		strings.ContainsAny(absolutePath, "\\\x00") || strings.Contains(absolutePath, "//") ||
+		strings.Contains(absolutePath, "://") || len(absolutePath) > 8192 {
+		return file, errors.New("path must be a clean absolute SOURCE_DIR + FILE name")
+	}
+	if absolutePath != file.Path && (path.IsAbs(file.Path) || !strings.HasSuffix(absolutePath, "/"+file.Path)) {
+		return file, fmt.Errorf("embedded Path: %q does not agree with %q", file.Path, absolutePath)
+	}
+	file.Path = absolutePath
+	return file, nil
+}
+
 type diffRequest struct {
 	Content string `json:"content"`
 }
@@ -474,6 +493,7 @@ func main() {
 		}
 		jsonResponse(w, 200, map[string]string{"status": "ok"})
 	})
+	mux.HandleFunc("/api/v1/files/process-upload", a.processUpload)
 	mux.HandleFunc("/api/v1/files/diff", a.diff)
 	mux.HandleFunc("/api/v1/files/batch-diff", a.batchDiff)
 	mux.HandleFunc("/api/v1/files", a.files)

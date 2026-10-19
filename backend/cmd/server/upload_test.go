@@ -1,0 +1,32 @@
+// Path: backend/cmd/server/upload_test.go
+package main
+
+import (
+	"testing"
+)
+
+func TestUploadFilename(t *testing.T) {
+	for _, name := range []string{"../secrets", "/etc/passwd", "a.txt", "20261019T155125123Z-12345.txt", "20261019T155125123Z-1234567890abcdef1234567890abcdef.txt/../x"} {
+		if _, err := uploadPath("/data/uploads", name); err == nil {
+			t.Errorf("accepted unsafe filename %q", name)
+		}
+	}
+	name := "20261019T155125123Z-1234567890abcdef1234567890abcdef.txt"
+	got, err := uploadPath("/data/uploads", name)
+	if err != nil || got != "/data/uploads/"+name {
+		t.Fatalf("path=%q err=%v", got, err)
+	}
+}
+
+func TestUploadedIdentity(t *testing.T) {
+	content := "// Path: scro-frontend/scro-mobile/scro-ios/scro-ios/App/ContentView.swift\nstruct ContentView {}\n"
+	resolved, err := parseUploadedSource(content, "/Users/example/scro.digital/scro-frontend/scro-mobile/scro-ios/scro-ios/App/ContentView.swift")
+	if err != nil || resolved.Path != "/Users/example/scro.digital/scro-frontend/scro-mobile/scro-ios/scro-ios/App/ContentView.swift" {
+		t.Fatalf("resolved=%v err=%v", resolved, err)
+	}
+	for _, name := range []string{"../../bad", "/Users/example/../../bad.swift", "/Users/example/other.swift"} {
+		if _, err := parseUploadedSource(content, name); err == nil {
+			t.Errorf("accepted invalid identity %q", name)
+		}
+	}
+}

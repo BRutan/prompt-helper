@@ -10,6 +10,8 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    volumes:
+      - ./data:/data
     networks: [prompt-helper-backend]
     restart: unless-stopped
 
@@ -27,6 +29,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - ./data:/data:ro
     healthcheck:
       test: ["CMD", "/usr/local/bin/prompt-helper", "healthcheck"]
       interval: 10s
