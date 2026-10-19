@@ -285,8 +285,17 @@ func (a *app) batchDiff(w http.ResponseWriter, r *http.Request) {
 		sendError(w, 422, err.Error())
 		return
 	}
-	// Lock canonical paths in stable order to avoid deadlock between concurrent batches.
-	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	// Preserve the original order of repeated paths (A -> B -> A). Acquire
+	// unique path locks in sorted order first to prevent inter-batch deadlocks.
+	uniquePaths := make(map[string]struct{}, len(files))
+	for _, file := range files {
+		uniquePaths[file.Path] = struct{}{}
+	}
+	lockPaths := make([]string, 0, len(uniquePaths))
+	for filePath := range uniquePaths {
+		lockPaths = append(lockPaths, filePath)
+	}
+	sort.Strings(lockPaths)
 	ctx := r.Context()
 	tx, err := a.db.Begin(ctx)
 	if err != nil {
@@ -295,6 +304,13 @@ func (a *app) batchDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(context.Background())
+	for _, filePath := range lockPaths {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, filePath); err != nil {
+			log.Printf("batch lock path=%q: %v", filePath, err)
+			sendError(w, 503, "cannot acquire file lock")
+			return
+		}
+	}
 	results := make([]diffResponse, 0, len(files))
 	for _, f := range files {
 		result, err := a.store(ctx, tx, header.File{Path: f.Path, Extension: f.Extension}, f.Content)

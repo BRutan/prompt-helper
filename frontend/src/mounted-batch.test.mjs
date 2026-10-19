@@ -64,7 +64,49 @@ test('framed source with no Path header preserves empty lines and shebangs', () 
   assert.equal(file.source, '#!/usr/bin/env python3\n\nprint(1)\n');
 });
 
-test('framed files still reject traversal, duplicates, and unsafe paths', () => {
+test('framed files still reject traversal and unsafe paths', () => {
   assert.throws(() => parseMultiFileDump(framed('../private.py', 'print(1)')));
-  assert.throws(() => parseMultiFileDump(framed('app/a.tsx', 'x\n') + framed('app/a.tsx', 'y\n')));
+  assert.throws(() => parseMultiFileDump(framed('/private.py', 'print(1)')));
+});
+
+test('identical repeated file is skipped without failing the entire paste', () => {
+  const version = framed('Features/Chat/ChatViewModel.swift', 'struct ChatViewModel { let n = 1 }\n');
+  const files = parseMultiFileDump(version + framed('Other.swift', 'struct Other {}\n') + version);
+  assert.equal(files.length, 2);
+  assert.deepEqual(files.map(file => file.path), [
+    '/Users/example/repo/src/Features/Chat/ChatViewModel.swift',
+    '/Users/example/repo/src/Other.swift',
+  ]);
+});
+
+test('different revisions of the same path remain in their original order, including revert', () => {
+  const versions = ['one', 'two', 'one'].map(value =>
+    framed('Features/Chat/ChatViewModel.swift', `let state = "${value}"\n`)).join('');
+  const files = parseMultiFileDump(versions);
+  assert.equal(files.length, 3);
+  assert.deepEqual(files.map(file => file.source), [
+    'let state = "one"\n', 'let state = "two"\n', 'let state = "one"\n',
+  ]);
+});
+
+test('merge reports distinct paths but retains every changed revision of repeated path', () => {
+  const path = '/project/Features/Chat/ChatViewModel.swift';
+  const result = mergeFileDiffResponses([
+    { path, status:'updated', version:2, extension:'.swift', sha256:'a2', additions:1, deletions:1,
+      llm_diff:'-old\n+new', unified_diff:'@@ -1 +1 @@' },
+    { path, status:'unchanged', version:2, extension:'.swift', sha256:'a2', additions:0, deletions:0,
+      llm_diff:'', unified_diff:'' },
+    { path, status:'updated', version:3, extension:'.swift', sha256:'a3', additions:1, deletions:1,
+      llm_diff:'-new\n+old', unified_diff:'@@ -1 +1 @@' },
+  ]);
+  assert.equal(result.total, 1);
+  assert.equal(result.changed, 1);
+  assert.equal(result.unchanged, 0);
+  assert.equal(result.additions, 2);
+  assert.equal(result.deletions, 2);
+  assert.equal(result.files[0].version, 3);
+  assert.match(result.llm_diff, /VERSION v2/);
+  assert.match(result.llm_diff, /VERSION v3/);
+  assert.equal((result.llm_diff.match(/=== \/project\/Features\/Chat\/ChatViewModel.swift ===/g) || []).length, 2);
+  assert.equal((result.llm_diff.match(/ChatViewModel.swift \[v3 updated\]/g) || []).length, 1);
 });

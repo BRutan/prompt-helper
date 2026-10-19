@@ -35,7 +35,7 @@ func Parse(content string) ([]Section, error) {
 	}
 
 	output := make([]Section, 0, len(matches))
-	seen := make(map[string]bool, len(matches))
+	latestContent := make(map[string]string, len(matches))
 	for i, match := range matches {
 		dir := strings.TrimSpace(content[match[2]:match[3]])
 		name := strings.TrimSpace(content[match[4]:match[5]])
@@ -47,10 +47,6 @@ func Parse(content string) ([]Section, error) {
 			return nil, fmt.Errorf("section %d: FILE must be a clean relative filepath: %q", i+1, name)
 		}
 		fullPath := path.Join(dir, name)
-		if seen[fullPath] {
-			return nil, fmt.Errorf("duplicate file in batch: %s", fullPath)
-		}
-		seen[fullPath] = true
 		end := len(content)
 		if i+1 < len(matches) {
 			end = matches[i+1][0]
@@ -67,6 +63,13 @@ func Parse(content string) ([]Section, error) {
 		if err != nil {
 			return nil, fmt.Errorf("section %d (%s): %w", i+1, fullPath, err)
 		}
+		// A repeated path is a new snapshot to compare. Only consecutive
+		// identical snapshots of that path are redundant; A -> B -> A must
+		// remain three comparisons so the last revert generates a diff.
+		if previous, exists := latestContent[fullPath]; exists && previous == body {
+			continue
+		}
+		latestContent[fullPath] = body
 		output = append(output, Section{Path: fullPath, Extension: annotated.Extension, Content: body})
 	}
 	return output, nil

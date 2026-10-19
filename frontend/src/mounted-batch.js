@@ -25,32 +25,46 @@ export function parseMultiFileDump(text) {
   FRAME.lastIndex = 0;
   const matches = [...text.matchAll(FRAME)];
   if (!matches.length) throw Error('No SOURCE_DIR / FILE frames found.');
-  const seen = new Set();
-  return matches.map((match, i) => {
+  // Only discard a repeated snapshot when its bytes match the most recent
+  // snapshot for this path. A -> B -> A is three real version comparisons.
+  const latestSource = new Map();
+  const sections = [];
+  matches.forEach((match, i) => {
     const dir = cleanPath(match[1], 'SOURCE_DIR');
     const file = cleanPath(match[2], 'FILE');
     if (!dir.startsWith('/') || file.startsWith('/')) {
       throw Error(`Section ${i + 1}: SOURCE_DIR must be absolute and FILE relative.`);
     }
     const path = `${dir === '/' ? '' : dir}/${file}`;
-    if (seen.has(path)) throw Error(`Duplicate file: ${path}`);
-    seen.add(path);
     const next = i + 1 < matches.length ? matches[i + 1].index : text.length;
     const raw = text.slice(match.index + match[0].length, next);
     const source = raw.replace(/^\r?\n/, '').replace(/[\r\n]+$/, '') + '\n';
-    return { path, source, bytes: encoder.encode(source).byteLength };
+    if (latestSource.get(path) === source) return;
+    latestSource.set(path, source);
+    sections.push({ path, source, bytes: encoder.encode(source).byteLength });
   });
+  return sections;
 }
 
 export function mergeFileDiffResponses(responses) {
-  const sorted = [...responses].sort((a, b) => a.path.localeCompare(b.path));
-  const files = sorted.map(({ path, extension, status, version, sha256, additions, deletions }) =>
-    ({ path, extension, status, version, sha256, additions, deletions }));
+  // Keep one current file in the tree, but retain every changed revision in
+  // source order for each path. Reversions are changes, not duplicates.
+  const ordered = responses.map((response, index) => ({ response, index }))
+    .sort((a, b) => a.response.path.localeCompare(b.response.path) || a.index - b.index);
+  const latest = new Map();
+  const changedPaths = new Set();
+  for (const { response } of ordered) {
+    latest.set(response.path, response);
+    if (response.status !== 'unchanged') changedPaths.add(response.path);
+  }
+  const files = [...latest.values()].map(({ path, extension, status, version, sha256, additions, deletions }) =>
+    ({ path, extension, status: changedPaths.has(path) ? (status === 'created' ? 'created' : 'updated') : 'unchanged',
+       version, sha256, additions, deletions }));
   const total = files.length;
-  const unchanged = files.filter(file => file.status === 'unchanged').length;
-  const changed = total - unchanged;
-  const additions = files.reduce((count, file) => count + (file.additions || 0), 0);
-  const deletions = files.reduce((count, file) => count + (file.deletions || 0), 0);
+  const changed = changedPaths.size;
+  const unchanged = total - changed;
+  const additions = responses.reduce((count, file) => count + (file.additions || 0), 0);
+  const deletions = responses.reduce((count, file) => count + (file.deletions || 0), 0);
   const tree = ['SOURCE FILE TREE (absolute paths):'];
   let directory = '';
   for (const file of files) {
@@ -58,15 +72,15 @@ export function mergeFileDiffResponses(responses) {
     if (dirname !== directory) { tree.push(`${dirname}/`); directory = dirname; }
     tree.push(`  ${file.path.slice(file.path.lastIndexOf('/') + 1)} [v${file.version} ${file.status}]`);
   }
-  const changedBlocks = sorted.filter(file => file.status !== 'unchanged')
-    .map(file => `\n=== ${file.path} ===\n${file.llm_diff}\nVERSION v${file.version} | SHA256 ${file.sha256}\n`);
+  const changedBlocks = ordered.filter(({ response }) => response.status !== 'unchanged')
+    .map(({ response: file }) => `\n=== ${file.path} ===\n${file.llm_diff}\nVERSION v${file.version} | SHA256 ${file.sha256}\n`);
   return {
     files, total, changed, unchanged, additions, deletions,
     llm_diff: [
       `BATCH DIFF | ${total} files | ${changed} changed | ${unchanged} unchanged`,
       '', ...tree, '', 'CHANGED FILES (old/new line numbers):', ...changedBlocks, '',
     ].join('\n'),
-    unified_diff: sorted.filter(file => file.status !== 'unchanged')
-      .map(file => file.unified_diff).filter(Boolean).join('\n'),
+    unified_diff: ordered.filter(({ response }) => response.status !== 'unchanged')
+      .map(({ response }) => response.unified_diff).filter(Boolean).join('\n'),
   };
 }

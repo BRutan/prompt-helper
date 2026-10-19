@@ -219,40 +219,53 @@ async function submitFile() {
     if (batchMode) {
       // Archive the *exact* original paste, including SOURCE_DIR / FILE frames.
       const originalFilename = await uploadSource(source.value);
-      // One saved source file and one DB transaction per backend request.
-      // No /batch-diff requests. Two independent workers at most.
+      // Each path is a sequential revision lane. The same file can occur more
+      // than once with different content; comparing versions concurrently would
+      // produce nondeterministic baselines/diffs. Independent paths stay parallel.
       const responses: Array<DiffResponse | undefined> = new Array(sections.length);
       const failures: string[] = [];
+      const lanes = new Map<string, number[]>();
+      sections.forEach((section, index) => {
+        const lane = lanes.get(section.path) || [];
+        lane.push(index);
+        lanes.set(section.path, lane);
+      });
+      const jobs = [...lanes.values()];
       let next = 0;
       let completed = 0;
       let stopped = false;
       const worker = async () => {
         while (!stopped) {
-          const index = next++;
-          if (index >= sections.length) return;
-          const section = sections[index];
-          submit.textContent = `Saved/compared ${completed}/${sections.length} files`;
-          try {
-            const result = await processSavedSource(section.source, section.path);
-            responses[index] = result;
-            completed++;
-            submit.textContent = `Saved/compared ${completed}/${sections.length} files`;
-          } catch (e) {
-            stopped = true;
-            failures.push(`${section.path}: ${(e as Error).message}`);
+          const job = jobs[next++];
+          if (!job) return;
+          for (const index of job) {
+            if (stopped) return;
+            const section = sections[index];
+            submit.textContent = `Saved/compared ${completed}/${sections.length} comparisons`;
+            try {
+              const result = await processSavedSource(section.source, section.path);
+              responses[index] = result;
+              completed++;
+              submit.textContent = `Saved/compared ${completed}/${sections.length} comparisons`;
+            } catch (e) {
+              stopped = true;
+              failures.push(`${section.path}: ${(e as Error).message}`);
+              return;
+            }
           }
         }
       };
-      await Promise.all(Array.from({ length: Math.min(2, sections.length) }, () => worker()));
+      await Promise.all(Array.from({ length: Math.min(2, jobs.length) }, () => worker()));
       const saved = responses.filter((item): item is DiffResponse => item !== undefined);
+      const identicalSkipped = countFramedFiles(source.value) - sections.length;
       if (saved.length) {
         const result = mergeFileDiffResponses(saved);
         get('result-status').textContent = failures.length
           ? `Partial: ${result.total}/${sections.length} confirmed`
-          : `${result.changed} changed / ${result.unchanged} unchanged`;
+          : `${result.changed} changed / ${result.unchanged} unchanged${identicalSkipped ? ` · ${identicalSkipped} identical duplicates skipped` : ''}`;
         get('result-version').textContent = `${result.total} files`;
         get('result-count').textContent = `+${result.additions} / −${result.deletions}`;
-        get('result-path').textContent = `${result.total} full paths · original: data/uploads/${originalFilename}`;
+        get('result-path').textContent = `${result.total} distinct paths · ${saved.length} comparisons · original: data/uploads/${originalFilename}`;
         const pre = document.createElement('pre');
         pre.className = 'batch-diff';
         pre.textContent = result.llm_diff;

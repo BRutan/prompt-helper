@@ -57,7 +57,6 @@ func TestSafety(t *testing.T) {
 	for _, input := range []string{
 		strings.Replace(valid, "FILE: App/ContentView.swift", "FILE: ../secrets.swift", 1),
 		strings.Replace(valid, "FILE: App/ContentView.swift", "FILE: /tmp/secrets.swift", 1),
-		strings.Replace(valid, "FILE: App/ContentView.swift", "FILE: Components/View/Another.swift", 1),
 	} {
 		if _, err := Parse(input); err == nil {
 			t.Fatal("accepted unsafe input")
@@ -93,5 +92,27 @@ func TestFrameOverridesPathHeader(t *testing.T) {
 	sections, err = Parse(conflicting)
 	if err != nil || len(sections) != 1 || sections[0].Path != "/src/app/admin/credit-risk/page.tsx" {
 		t.Fatalf("frame should override Path: sections=%+v err=%v", sections, err)
+	}
+}
+
+func TestRepeatedPathSnapshots(t *testing.T) {
+	frame := func(source string) string {
+		return "================================================================================\n" +
+			"SOURCE_DIR: /repo\n" +
+			"FILE: Features/Chat/ChatViewModel.swift\n" +
+			"================================================================================\n\n" + source + "\n"
+	}
+	first := frame("struct Chat { let text = \"one\" }")
+	second := frame("struct Chat { let text = \"two\" }")
+	files, err := Parse(first + first)
+	if err != nil || len(files) != 1 {
+		t.Fatalf("identical duplicate should be skipped: len=%d err=%v", len(files), err)
+	}
+	files, err = Parse(first + second + second + first)
+	if err != nil || len(files) != 3 {
+		t.Fatalf("changed content and revert must be retained: len=%d err=%v", len(files), err)
+	}
+	if files[0].Content != files[2].Content || files[1].Content == files[0].Content {
+		t.Fatalf("wrong revision order: %#v", files)
 	}
 }
