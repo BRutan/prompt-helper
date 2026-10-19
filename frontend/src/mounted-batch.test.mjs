@@ -26,3 +26,27 @@ test('unchanged files appear in path tree but not changed hunks', () => {
   assert.match(result.llm_diff,/=== \/project\/src\/A\.swift ===/);
   assert.doesNotMatch(result.llm_diff,/=== \/project\/src\/B\.swift ===/);
 });
+
+
+test('accepts a literal Path: header for a framed Python file', () => {
+  const files = parseMultiFileDump(framed('scripts/simulator_appium_navigation.py',
+    'Path: scripts/simulator_appium_navigation.py\nprint("ok")\n'));
+  assert.equal(files.length, 1);
+  assert.equal(files[0].path, '/Users/example/repo/src/scripts/simulator_appium_navigation.py');
+  assert.equal(files[0].source, 'Path: scripts/simulator_appium_navigation.py\nprint("ok")\n');
+});
+
+test('mixed bare and commented Path headers retain their source', () => {
+  const files = parseMultiFileDump(
+    framed('scripts/run.py', 'Path: scripts/run.py\nprint(1)\n') +
+    framed('App/View.swift', '// Path: App/View.swift\nstruct View {}\n'));
+  assert.equal(files.length, 2);
+  assert.match(files[0].source, /^Path: scripts\/run\.py/);
+  assert.match(files[1].source, /^\/\/ Path: App\/View\.swift/);
+});
+
+test('plain Path mismatch still fails identity validation', () => {
+  assert.throws(() => parseMultiFileDump(
+    framed('scripts/expected.py', 'Path: scripts/unrelated.py\nprint(1)\n')),
+    /disagrees/);
+});

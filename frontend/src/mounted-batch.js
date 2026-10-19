@@ -19,8 +19,8 @@ function cleanPath(value, label) {
   return out;
 }
 
-// Each section's `source` starts with its own Path: comment. `content` includes
-// the dump framing only for archival/debugging; it is NOT sent to Go for diff.
+// Each section starts with a bare Path: line or an extension-specific
+// Path: comment. The original source bytes are archived and compared intact.
 export function parseMultiFileDump(text) {
   FRAME.lastIndex = 0;
   const matches = [...text.matchAll(FRAME)];
@@ -40,8 +40,8 @@ export function parseMultiFileDump(text) {
     const source = raw.replace(/^\r?\n/, '').replace(/[\r\n]+$/, '') + '\n';
     const lines = source.replace(/^\uFEFF/, '').split(/\r?\n/);
     const first = lines[0].startsWith('#!') ? lines[1] || '' : lines[0];
-    const header = first.match(/^(?:<!--|\/\*|\/\/|--|#)[ \t]+Path:[ \t]+(.+?)\s*$/);
-    if (!header) throw Error(`Section ${i + 1} (${path}): missing a Path: comment.`);
+    const header = first.match(/^(?:(?:<!--|\/\*|\/\/|--|#)[ \t]+)?Path:[ \t]+(.+?)\s*$/);
+    if (!header) throw Error(`Section ${i + 1} (${path}): missing a Path: header (plain or commented).`);
     const embedded = header[1].replace(/(?:\s*\*\/|\s*-->)$/, '').trim();
     if (path !== embedded && !path.endsWith('/' + embedded)) {
       throw Error(`Section ${i + 1}: Path: ${embedded} disagrees with ${path}`);

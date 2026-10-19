@@ -30,3 +30,15 @@ func TestUploadedIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestUploadedPlainPath(t *testing.T) {
+	content := "Path: scripts/simulator_appium_navigation.py\nprint('ok')\n"
+	wanted := "/Users/example/repo/scripts/simulator_appium_navigation.py"
+	file, err := parseUploadedSource(content, wanted)
+	if err != nil || file.Path != wanted || file.Extension != ".py" {
+		t.Fatalf("file=%+v err=%v", file, err)
+	}
+	if _, err := parseUploadedSource(content, "/Users/example/repo/scripts/other.py"); err == nil {
+		t.Fatal("plain Path: must match SOURCE_DIR / FILE identity")
+	}
+}

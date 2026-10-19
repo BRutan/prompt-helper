@@ -7,6 +7,8 @@ func TestParse(t *testing.T) {
 		content, path, ext string
 		ok                 bool
 	}{
+		{"Path: scripts/simulator_appium_navigation.py\nprint(123)", "scripts/simulator_appium_navigation.py", ".py", true},
+		{"Path: scro-ios/App/ContentView.swift\nstruct Foo {}", "scro-ios/App/ContentView.swift", ".swift", true},
 		{"// Path: scro-ios/App/ContentView.swift\nstruct Foo {}", "scro-ios/App/ContentView.swift", ".swift", true},
 		{"# Path: jobs/random_transaction/ingest.py\nprint('hi')", "jobs/random_transaction/ingest.py", ".py", true},
 		{"#!/usr/bin/env bash\n# Path: scripts/run.sh\necho hi", "scripts/run.sh", ".sh", true},
@@ -20,6 +22,9 @@ func TestParse(t *testing.T) {
 		{"// Path: src/main.json\n{}", "", "", false},
 		{"// Path: src/../main.ts\nx", "", "", false},
 		{"// Path: App.tsx\nx", "", "", false},
+		{"Path: ../secrets.py\nprint(1)", "", "", false},
+		{"Path: src/../main.py\nprint(1)", "", "", false},
+		{"Path: src/main.json\n{}", "", "", false},
 		{"//Path: src/App.tsx\nx", "", "", false},
 		{"// Path: src/a.ts\n\x00", "", "", false},
 		{"hello", "", "", false},

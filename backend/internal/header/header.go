@@ -1,4 +1,4 @@
-// Package header checks the required extension-specific Path comment.
+// Package header checks extension-specific Path comments or a bare Path line.
 // It never reads or writes the user-supplied path on the host filesystem.
 package header
 
@@ -70,6 +70,14 @@ func Parse(content string) (File, error) {
 	var rawPath string
 	var leader comment
 	found := false
+	// Plain Path: is accepted in addition to extension-specific comment
+	// headers. The stored bytes remain untouched; only metadata is parsed.
+	plain := false
+	if strings.HasPrefix(first, "Path:") && len(first) > len("Path:") &&
+		(first[len("Path:")] == ' ' || first[len("Path:")] == '\t') {
+		rawPath = strings.TrimSpace(first[len("Path:"):])
+		plain, found = true, true
+	}
 	for _, c := range candidates {
 		if !strings.HasPrefix(first, c.open) {
 			continue
@@ -97,7 +105,7 @@ func Parse(content string) (File, error) {
 		break
 	}
 	if !found {
-		return File{}, errors.New("first line must be a supported comment header such as '// Path: src/App.tsx'; shell shebang may precede it")
+		return File{}, errors.New("first line must be Path: src/App.tsx or a supported comment header such as '// Path: src/App.tsx'; shell shebang may precede it")
 	}
 	if len(rawPath) == 0 || len(rawPath) > 2048 || strings.ContainsAny(rawPath, "\\\r\n\x00") ||
 		strings.Contains(rawPath, "*/") || strings.Contains(rawPath, "-->") {
@@ -117,7 +125,7 @@ func Parse(content string) (File, error) {
 	if !ok {
 		return File{}, fmt.Errorf("unsupported extension %q (strict JSON has no comment syntax; use .jsonc)", ext)
 	}
-	if leader != expected {
+	if !plain && leader != expected {
 		return File{}, fmt.Errorf("%s requires header syntax: %s Path: %s%s", ext, expected.open, rawPath, ternary(expected.close != "", " "+expected.close, ""))
 	}
 	return File{Path: rawPath, Extension: ext}, nil

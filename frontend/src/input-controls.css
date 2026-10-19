@@ -1,0 +1,8 @@
+/* Path: frontend/src/input-controls.css */
+.source-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 9px; }
+.source-toolbar label { margin-bottom: 0; }
+.toolbar-actions { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.source-toolbar .secondary { padding: 6px 10px; }
+/* Avoid soft-wrap recalculation for very large, long-lined source dumps. */
+#source { overflow-wrap: normal; white-space: pre; }
+@media (max-width: 600px) { .source-toolbar { flex-wrap: wrap; } }

@@ -1,5 +1,7 @@
 // Path: frontend/src/mounted-main.ts
 import './style.css';
+import './input-controls.css';
+import { countFramedFiles } from './input-preview.js';
 import { renderDiff } from './renderDiff.js';
 import { isMultiFileDump, parseMultiFileDump, mergeFileDiffResponses } from './mounted-batch.js';
 
@@ -18,6 +20,8 @@ function get<T extends HTMLElement>(id: string): T {
   return node as T;
 }
 const source = get<HTMLTextAreaElement>('source');
+// Code-editor behavior: avoid costly soft-wrap layout on very long pasted lines.
+source.wrap = 'off';
 const submit = get<HTMLButtonElement>('submit');
 const error = get<HTMLDivElement>('error');
 const diff = get<HTMLDivElement>('diff');
@@ -26,6 +30,63 @@ const lang = get<HTMLSpanElement>('input-lang');
 const copy = get<HTMLButtonElement>('copy');
 const extFilter = get<HTMLInputElement>('extension');
 let llmOutput = '';
+
+// Install controls without changing the existing HTML or replacing user layouts.
+function control(label: string, title: string): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'secondary';
+  button.textContent = label;
+  button.title = title;
+  button.setAttribute('aria-label', title);
+  return button;
+}
+
+const sourceClear = control('Clear', 'Clear file input');
+const sourceCopy = control('Copy', 'Copy file input');
+const llmClear = control('Clear', 'Clear LLM output');
+const sourceLabel = document.querySelector<HTMLLabelElement>('label[for="source"]');
+if (sourceLabel?.parentElement) {
+  const toolbar = document.createElement('div');
+  toolbar.className = 'source-toolbar';
+  sourceLabel.parentElement.insertBefore(toolbar, sourceLabel);
+  const actions = document.createElement('div');
+  actions.className = 'toolbar-actions';
+  toolbar.append(sourceLabel, actions);
+  actions.append(sourceCopy, sourceClear);
+}
+if (copy.parentElement) {
+  const actions = document.createElement('div');
+  actions.className = 'toolbar-actions';
+  copy.parentElement.insertBefore(actions, copy);
+  actions.append(copy, llmClear);
+}
+
+sourceClear.addEventListener('click', () => {
+  source.value = '';
+  source.dispatchEvent(new Event('input'));
+  clearError();
+});
+sourceCopy.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(source.value);
+    sourceCopy.textContent = 'Copied!';
+    setTimeout(() => { sourceCopy.textContent = 'Copy'; }, 1200);
+  } catch (e) { setError(`Could not copy file input: ${(e as Error).message}`); }
+});
+llmClear.addEventListener('click', () => {
+  llmOutput = '';
+  copy.disabled = true;
+  get('result-status').textContent = 'No comparison yet';
+  get('result-version').textContent = '—';
+  get('result-count').textContent = '—';
+  get('result-path').textContent = 'Submit a file to create its baseline.';
+  const placeholder = document.createElement('div');
+  placeholder.className = 'diff-empty';
+  placeholder.textContent = 'Changed lines will appear here with old and new line numbers in the gutter.';
+  diff.replaceChildren(placeholder);
+});
+
 
 // The browser splits multi-file dumps before making any HTTP requests.
 
@@ -39,10 +100,11 @@ for (const ext of ['.css','.scss','.less']) comments[ext] = ['/*','*/'];
 for (const ext of ['.html','.htm','.xml','.svg','.md','.mdx','.vue']) comments[ext] = ['<!--','-->'];
 
 function validate(input: string): { path: string; ext: string } {
-  const raw = input.replace(/^\uFEFF/, '').split('\n');
+  // Only inspect the header; splitting a multi-megabyte input allocates huge arrays.
+  const raw = input.replace(/^\uFEFF/, '').slice(0, 4096).split('\n', 2);
   const first = (raw[0] || '').startsWith('#!') ? raw[1] || '' : raw[0] || '';
-  const match = first.replace(/\r$/, '').match(/^(<!--|\/\*|\/\/|--|#)[ \t]+Path:[ \t]+(.+?)\s*$/);
-  if (!match) throw new Error('Missing first-line header: // Path: src/components/App.tsx (or the comment syntax for your extension).');
+  const match = first.replace(/\r$/, '').match(/^(?:(<!--|\/\*|\/\/|--|#)[ \t]+)?Path:[ \t]+(.+?)\s*$/);
+  if (!match) throw new Error('Missing first-line header: Path: src/components/App.tsx (or // Path: ... / another supported comment format).');
   let p = match[2].trim();
   let ext = p.slice(p.lastIndexOf('.')).toLowerCase();
   if (/\/(?:Dockerfile(?:\.[^/]*)?|Makefile|GNUmakefile)$/i.test(p)) ext = '.mk';
@@ -53,22 +115,36 @@ function validate(input: string): { path: string; ext: string } {
     if (!p.endsWith(spec[1])) throw new Error(`Expected a ${spec[0]} Path: ... ${spec[1]} header.`);
     p = p.slice(0, -spec[1].length).trim();
   }
-  if (spec[0] !== match[1]) throw new Error(`.${ext.replace('.', '')} files must start with a '${spec[0]} Path: ...${spec[1] ? ` ${spec[1]}` : ''}' comment.`);
+  if (match[1] && spec[0] !== match[1]) throw new Error(`.${ext.replace('.', '')} files must start with a '${spec[0]} Path: ...${spec[1] ? ` ${spec[1]}` : ''}' comment.`);
   if (!p.includes('/') || p.includes('\\') || p.includes('/../') || p.includes('/./') || p.startsWith('../') || p.endsWith('/')) throw new Error('Path: must contain a complete directory-qualified slash-separated filename without traversal.');
   return { path: p, ext };
 }
 
-source.addEventListener('input', () => {
-  count.textContent = `${source.value.length.toLocaleString()} chars`;
-  if (isMultiFileDump(source.value)) {
-    try { lang.textContent = `Batch · ${parseMultiFileDump(source.value).length} files`; }
-    catch { lang.textContent = 'Invalid multi-file dump'; }
-  }
-  else {
-    try { const parsed = validate(source.value); lang.textContent = parsed.ext; }
+// Never parse or scan a multi-megabyte paste synchronously in its input event.
+// Debouncing also avoids repeated work during typing and repeated pastes.
+let previewTimer: ReturnType<typeof setTimeout> | undefined;
+function refreshInputPreview() {
+  previewTimer = undefined;
+  const value = source.value;
+  count.textContent = `${value.length.toLocaleString()} chars`;
+  const framedFiles = countFramedFiles(value);
+  if (framedFiles) {
+    lang.textContent = `Batch · ${framedFiles} files`;
+  } else {
+    try { lang.textContent = validate(value).ext; }
     catch { lang.textContent = 'Awaiting valid path'; }
   }
+}
+source.addEventListener('input', () => {
+  // These constant-time updates are safe even for a very large paste.
+  const hasText = source.value.length !== 0;
+  sourceClear.disabled = !hasText;
+  sourceCopy.disabled = !hasText;
+  if (previewTimer !== undefined) clearTimeout(previewTimer);
+  // Yield to the browser so it can paint the pasted text before scanning it.
+  previewTimer = setTimeout(refreshInputPreview, hasText ? 350 : 0);
 });
+source.dispatchEvent(new Event('input'));
 
 function setError(message: string) { error.textContent = message; error.hidden = false; }
 function clearError() { error.hidden = true; error.textContent = ''; }
