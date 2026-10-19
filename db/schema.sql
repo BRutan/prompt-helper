@@ -1,5 +1,5 @@
 -- Path: db/schema.sql
--- Prompterr v1: immutable baseline, materialized latest, append-only revisions.
+-- prompt-helper v1: immutable baseline, materialized latest, append-only revisions.
 CREATE TABLE IF NOT EXISTS files (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   path TEXT NOT NULL UNIQUE,

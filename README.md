@@ -1,13 +1,13 @@
-# Prompterr
+# prompt-helper
 
-Context-efficient source-file snapshots and diffs. Paste a **UTF-8 source file or multi-file SOURCE_DIR / FILE dump** into a web textbox, starting with a mandatory extension-appropriate `Path:` comment. Prompterr stores the original file once, tracks later versions, and returns only changed hunks with old/new line numbers. Identical submissions do not create revisions. There are **three service-local Dockerfiles and three Compose services** sharing the `prompterr-backend` network.
+Context-efficient source-file snapshots and diffs. Paste a **UTF-8 source file or multi-file SOURCE_DIR / FILE dump** into a web textbox, starting with a mandatory extension-appropriate `Path:` comment. prompt-helper stores the original file once, tracks later versions, and returns only changed hunks with old/new line numbers. Identical submissions do not create revisions. There are **three service-local Dockerfiles and three Compose services** sharing the `prompt-helper-backend` network.
 
 ## Repository layout
 
 Each container owns its Dockerfile, `Dockerfile.dockerignore`, and everything needed for its build context. Docker Compose and Make commands remain at the repository root.
 
 ```text
-prompterr/
+prompt-helper/
 ├── docker-compose.yml
 ├── Makefile
 ├── .env.example
@@ -38,9 +38,9 @@ The Compose builds use `context: ./frontend`, `context: ./backend`, and `context
 
 | Service | Container | Technology | Responsibility |
 |---|---|---|---|
-| frontend | `prompterr-frontend` | TypeScript, JavaScript, Vite (build), Nginx (serve) | Client-side validation; source textbox; guttered changes; copy-for-LLM button; extension filtering |
-| backend | `prompterr-backend` | Go 1.23, native Git histogram diff | Independent header validation, SHA-256 deduplication, line-based diff computation, HTTP API |
-| db | `prompterr-db` | PostgreSQL 17 | Original baseline, latest materialized content, immutable versioned patches, extension index |
+| frontend | `prompt-helper-frontend` | TypeScript, JavaScript, Vite (build), Nginx (serve) | Client-side validation; source textbox; guttered changes; copy-for-LLM button; extension filtering |
+| backend | `prompt-helper-backend` | Go 1.23, native Git histogram diff | Independent header validation, SHA-256 deduplication, line-based diff computation, HTTP API |
+| db | `prompt-helper-db` | PostgreSQL 17 | Original baseline, latest materialized content, immutable versioned patches, extension index |
 
 Only the frontend is bound to a host port (`127.0.0.1:5173` by default). The backend and PostgreSQL remain internal to the bridge network. The filename is **an identifier**; the application never reads/writes the named file in the host filesystem. Content is not executed. The backend never sends code to external AI APIs.
 
@@ -51,7 +51,7 @@ Only the frontend is bound to a host port (`127.0.0.1:5173` by default). The bac
 
 ```sh
 cp .env.example .env
-# Update PROMPTERR_DB_PASSWORD in .env before any shared deployment.
+# Update PROMPT_HELPER_DB_PASSWORD in .env before any shared deployment.
 make build-up
 # Visit http://localhost:5173
 ```
@@ -91,7 +91,7 @@ make logs SERVICE=backend
 make clean CONFIRM=1      # permanently deletes PostgreSQL volume
 ```
 
-Every service uses the same named Compose bridge network `prompterr-backend`. The backend resolves the DB using the hostname `db`; Nginx proxies `/api/` to `backend:8080`. Both endpoints are otherwise unexposed.
+Every service uses the same named Compose bridge network `prompt-helper-backend`. The backend resolves the DB using the hostname `db`; Nginx proxies `/api/` to `backend:8080`. Both endpoints are otherwise unexposed.
 
 ## Required file headers
 

@@ -1,4 +1,4 @@
-module github.com/prompterr/prompterr/backend
+module github.com/prompt-helper/prompt-helper/backend
 
 go 1.23
 

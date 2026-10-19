@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/prompterr/prompterr/backend/internal/header"
+	"github.com/prompt-helper/prompt-helper/backend/internal/header"
 )
 
 // Section is a single validated source file extracted from a combined paste.

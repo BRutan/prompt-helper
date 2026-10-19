@@ -1,64 +1,64 @@
-name: prompterr
+name: prompt-helper
 services:
   frontend:
-    container_name: prompterr-frontend
+    container_name: prompt-helper-frontend
     build:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "127.0.0.1:${PROMPTERR_PORT:-5173}:80"
+      - "127.0.0.1:${PROMPT_HELPER_PORT:-5173}:80"
     depends_on:
       backend:
         condition: service_healthy
-    networks: [prompterr-backend]
+    networks: [prompt-helper-backend]
     restart: unless-stopped
 
   backend:
-    container_name: prompterr-backend
+    container_name: prompt-helper-backend
     build:
       context: ./backend
       dockerfile: Dockerfile
     environment:
       DB_HOST: db
-      DB_NAME: prompterr
-      DB_USER: prompterr
-      DB_PASSWORD: ${PROMPTERR_DB_PASSWORD:-prompterr_dev_only}
+      DB_NAME: prompt-helper
+      DB_USER: prompt-helper
+      DB_PASSWORD: ${PROMPT_HELPER_DB_PASSWORD:-prompt-helper_dev_only}
       LISTEN_ADDR: :8080
     depends_on:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "/usr/local/bin/prompterr", "healthcheck"]
+      test: ["CMD", "/usr/local/bin/prompt-helper", "healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 6
       start_period: 10s
-    networks: [prompterr-backend]
+    networks: [prompt-helper-backend]
     restart: unless-stopped
 
   db:
-    container_name: prompterr-db
+    container_name: prompt-helper-db
     build:
       context: ./db
       dockerfile: Dockerfile
     environment:
-      POSTGRES_DB: prompterr
-      POSTGRES_USER: prompterr
-      POSTGRES_PASSWORD: ${PROMPTERR_DB_PASSWORD:-prompterr_dev_only}
+      POSTGRES_DB: prompt-helper
+      POSTGRES_USER: prompt-helper
+      POSTGRES_PASSWORD: ${PROMPT_HELPER_DB_PASSWORD:-prompt-helper_dev_only}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U prompterr -d prompterr"]
+      test: ["CMD-SHELL", "pg_isready -U prompt-helper -d prompt-helper"]
       interval: 5s
       timeout: 3s
       retries: 12
-    networks: [prompterr-backend]
+    networks: [prompt-helper-backend]
     restart: unless-stopped
 
 volumes:
   postgres-data:
 
 networks:
-  prompterr-backend:
-    name: prompterr-backend
+  prompt-helper-backend:
+    name: prompt-helper-backend
     driver: bridge

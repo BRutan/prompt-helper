@@ -70,7 +70,7 @@ func Initial(path, text string) Result {
 // Diff returns a context-limited unified diff with original and new line numbers.
 // Exit code 1 from git diff means differences were found (not an error).
 func Diff(ctx context.Context, filePath, before, after string) (Result, error) {
-	dir, err := os.MkdirTemp("", "prompterr-diff-")
+	dir, err := os.MkdirTemp("", "prompt-helper-diff-")
 	if err != nil {
 		return Result{}, err
 	}

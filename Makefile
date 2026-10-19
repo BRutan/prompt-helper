@@ -7,7 +7,7 @@ SERVICES := frontend backend db
 .PHONY: help build up down build-up down-up status logs clean annotate-paths $(foreach svc,$(SERVICES),build-$(svc) up-$(svc) down-$(svc) build-up-$(svc) down-up-$(svc))
 
 help:
-	@printf 'Prompterr (all services on network prompterr-backend)\n\n'
+	@printf 'prompt-helper (all services on network prompt-helper-backend)\n\n'
 	@printf '  make build | up | down | build-up | down-up\n'
 	@printf '  make build-frontend | up-frontend | down-frontend | build-up-frontend | down-up-frontend\n'
 	@printf '  make build-backend  | up-backend  | down-backend  | build-up-backend  | down-up-backend\n'
@@ -35,7 +35,7 @@ display-frontend: ## Open the frontend in a browser, starting the service when n
 	@set -eu; \
 	running="$$( $(COMPOSE) ps -q --status running frontend 2>/dev/null || true )"; \
 	if [ -z "$$running" ]; then \
-		echo 'Starting Prompterr frontend and dependencies...'; \
+		echo 'Starting prompt-helper frontend and dependencies...'; \
 		$(COMPOSE) up -d --wait frontend; \
 	fi; \
 	binding="$$( $(COMPOSE) port frontend 80 )"; \
@@ -48,7 +48,7 @@ display-frontend: ## Open the frontend in a browser, starting the service when n
 		''|*[!0-9]*) echo "ERROR: invalid published frontend port: $$binding" >&2; exit 1 ;; \
 	esac; \
 	url="http://127.0.0.1:$$port"; \
-	echo "Opening Prompterr frontend: $$url"; \
+	echo "Opening prompt-helper frontend: $$url"; \
 	if command -v open >/dev/null 2>&1; then \
 		open "$$url"; \
 	elif command -v xdg-open >/dev/null 2>&1; then \

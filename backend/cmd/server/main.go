@@ -22,9 +22,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/prompterr/prompterr/backend/internal/batch"
-	"github.com/prompterr/prompterr/backend/internal/header"
-	"github.com/prompterr/prompterr/backend/internal/patch"
+	"github.com/prompt-helper/prompt-helper/backend/internal/batch"
+	"github.com/prompt-helper/prompt-helper/backend/internal/header"
+	"github.com/prompt-helper/prompt-helper/backend/internal/patch"
 )
 
 type app struct {
@@ -443,11 +443,11 @@ func main() {
 		return
 	}
 	dbConfig, err := pgxpool.ParseConfig(fmt.Sprintf("host=%s port=5432 dbname=%s user=%s sslmode=disable",
-		env("DB_HOST", "db"), env("DB_NAME", "prompterr"), env("DB_USER", "prompterr")))
+		env("DB_HOST", "db"), env("DB_NAME", "prompt-helper"), env("DB_USER", "prompt-helper")))
 	if err != nil {
 		log.Fatal(err)
 	}
-	dbConfig.ConnConfig.Password = env("DB_PASSWORD", "prompterr_dev_only")
+	dbConfig.ConnConfig.Password = env("DB_PASSWORD", "prompt-helper_dev_only")
 	dbConfig.MaxConns = 10
 	db, err := pgxpool.NewWithConfig(context.Background(), dbConfig)
 	if err != nil {
@@ -489,7 +489,7 @@ func main() {
 		defer cancel()
 		_ = server.Shutdown(ctx)
 	}()
-	log.Printf("Prompterr API listening on %s (no application-level body-size cap)", addr)
+	log.Printf("prompt-helper API listening on %s (no application-level body-size cap)", addr)
 	err = server.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
