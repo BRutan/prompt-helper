@@ -1,6 +1,7 @@
 // Path: frontend/src/main.ts
 import './style.css';
 import { renderDiff } from './renderDiff.js';
+import { apiFetchJSON } from './api.js';
 
 type DiffLine = { kind: string; old_line: number | null; new_line: number | null; text: string };
 type DiffResponse = {
@@ -94,12 +95,11 @@ async function submitFile() {
   submit.disabled = true;
   submit.textContent = 'Comparing…';
   try {
-    const response = await fetch(batchMode ? '/api/v1/files/batch-diff' : '/api/v1/files/diff', {
+    const endpoint = batchMode ? '/api/v1/files/batch-diff' : '/api/v1/files/diff';
+    const data = await apiFetchJSON<DiffResponse | BatchResponse>(endpoint, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: source.value }),
     });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     if (batchMode) {
       const result = data as BatchResponse;
       get('result-status').textContent = `${result.changed} changed / ${result.unchanged} unchanged`;
