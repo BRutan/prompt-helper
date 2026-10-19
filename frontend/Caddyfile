@@ -1,0 +1,45 @@
+# Path: frontend/Caddyfile
+# Keep frontend and API under the same localhost origin. No TLS is necessary
+# inside Docker; Compose binds the frontend to 127.0.0.1 on the host.
+{
+    auto_https off
+    admin off
+}
+
+:80 {
+    log {
+        output stdout
+        format json
+    }
+    encode zstd gzip
+
+    # Stream source text into the existing Node timestamped-file writer.
+    # Caddy forwards request bodies without staging them in proxy temp files.
+    @upload path /upload/file
+    handle @upload {
+        reverse_proxy 127.0.0.1:8081 {
+            transport http {
+                dial_timeout 10s
+                response_header_timeout 3m
+            }
+        }
+    }
+
+    # Do not retry POST requests automatically: the backend may have committed
+    # the file even if the client lost the response. Go controls processing.
+    handle /api/* {
+        reverse_proxy backend:8080 {
+            transport http {
+                dial_timeout 10s
+                response_header_timeout 5m
+            }
+        }
+    }
+
+    # Preserve Vite's client-side routing with the SPA fallback.
+    handle {
+        root * /usr/share/caddy
+        try_files {path} /index.html
+        file_server
+    }
+}
