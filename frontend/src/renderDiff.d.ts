@@ -1,3 +1,4 @@
+// Path: frontend/src/renderDiff.d.ts
 export interface DiffLine {
   kind: string;
   old_line: number | null;

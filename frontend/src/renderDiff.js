@@ -1,3 +1,4 @@
+// Path: frontend/src/renderDiff.js
 /**
  * Render only changed hunks with line-number gutters. `textContent` avoids
  * interpreting pasted source code as HTML, including user-controlled diffs.

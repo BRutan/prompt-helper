@@ -1,3 +1,4 @@
+// Path: frontend/src/main.ts
 import './style.css';
 import { renderDiff } from './renderDiff.js';
 
@@ -7,6 +8,11 @@ type DiffResponse = {
   version: number; sha256: string; previous_sha256?: string;
   unified_diff: string; llm_diff: string; lines: DiffLine[];
   additions: number; deletions: number;
+};
+type BatchResponse = {
+  files: Array<{ path: string; extension: string; status: string; version: number }>;
+  total: number; changed: number; unchanged: number; additions: number; deletions: number;
+  llm_diff: string; unified_diff: string;
 };
 type FilesResponse = { files: Array<{ path: string; extension: string; version: number; updated_at: string }> };
 
@@ -24,6 +30,18 @@ const lang = get<HTMLSpanElement>('input-lang');
 const copy = get<HTMLButtonElement>('copy');
 const extFilter = get<HTMLInputElement>('extension');
 let llmOutput = '';
+
+// A batch is recognized by its framed SOURCE_DIR / FILE section, not by the
+// first source file’s own Path comment. Validation is repeated on the Go API.
+const batchHeader = /^={8,}\r?\nSOURCE_DIR:[ \t]*[^\r\n]+\r?\nFILE:[ \t]*[^\r\n]+\r?\n={8,}\r?$/gm;
+function isBatch(input: string): boolean {
+  batchHeader.lastIndex = 0;
+  return batchHeader.test(input);
+}
+function batchCount(input: string): number {
+  batchHeader.lastIndex = 0;
+  return Array.from(input.matchAll(batchHeader)).length;
+}
 
 // This is only immediate user feedback. The Go API independently enforces
 // supported extensions and comment leaders before persisting any data.
@@ -56,8 +74,11 @@ function validate(input: string): { path: string; ext: string } {
 
 source.addEventListener('input', () => {
   count.textContent = `${source.value.length.toLocaleString()} chars`;
-  try { const parsed = validate(source.value); lang.textContent = parsed.ext; }
-  catch { lang.textContent = 'Awaiting valid path'; }
+  if (isBatch(source.value)) lang.textContent = `Batch · ${batchCount(source.value)} files`;
+  else {
+    try { const parsed = validate(source.value); lang.textContent = parsed.ext; }
+    catch { lang.textContent = 'Awaiting valid path'; }
+  }
 });
 
 function setError(message: string) { error.textContent = message; error.hidden = false; }
@@ -65,26 +86,43 @@ function clearError() { error.hidden = true; error.textContent = ''; }
 
 async function submitFile() {
   clearError();
-  try { validate(source.value); }
-  catch (e) { setError((e as Error).message); return; }
+  const batchMode = isBatch(source.value);
+  if (!batchMode) {
+    try { validate(source.value); }
+    catch (e) { setError((e as Error).message); return; }
+  }
   submit.disabled = true;
   submit.textContent = 'Comparing…';
   try {
-    const response = await fetch('/api/v1/files/diff', {
+    const response = await fetch(batchMode ? '/api/v1/files/batch-diff' : '/api/v1/files/diff', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: source.value }),
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-    const result = data as DiffResponse;
-    get('result-status').textContent = result.status === 'created' ? 'Baseline stored' : result.status === 'updated' ? 'Changes stored' : 'Unchanged';
-    get('result-version').textContent = `v${result.version}`;
-    get('result-count').textContent = result.status === 'unchanged' ? '0 changes' : `+${result.additions} / −${result.deletions}`;
-    get('result-path').textContent = `${result.path} · SHA256 ${result.sha256.slice(0, 12)}…`;
-    renderDiff(diff, result.lines || []);
-    llmOutput = result.status === 'unchanged'
-      ? `FILE ${result.path} | UNCHANGED at v${result.version} | SHA256 ${result.sha256}\n`
-      : `${result.llm_diff}\nVERSION v${result.version} | SHA256 ${result.sha256}\n`;
+    if (batchMode) {
+      const result = data as BatchResponse;
+      get('result-status').textContent = `${result.changed} changed / ${result.unchanged} unchanged`;
+      get('result-version').textContent = `${result.total} files`;
+      get('result-count').textContent = `+${result.additions} / −${result.deletions}`;
+      get('result-path').textContent = result.files.map(file => file.path).join('  ·  ');
+      // One <pre> avoids allocating tens of thousands of DOM rows for large pastes.
+      const pre = document.createElement('pre');
+      pre.className = 'batch-diff';
+      pre.textContent = result.llm_diff;
+      diff.replaceChildren(pre);
+      llmOutput = result.llm_diff;
+    } else {
+      const result = data as DiffResponse;
+      get('result-status').textContent = result.status === 'created' ? 'Baseline stored' : result.status === 'updated' ? 'Changes stored' : 'Unchanged';
+      get('result-version').textContent = `v${result.version}`;
+      get('result-count').textContent = result.status === 'unchanged' ? '0 changes' : `+${result.additions} / −${result.deletions}`;
+      get('result-path').textContent = `${result.path} · SHA256 ${result.sha256.slice(0, 12)}…`;
+      renderDiff(diff, result.lines || []);
+      llmOutput = result.status === 'unchanged'
+        ? `FILE ${result.path} | UNCHANGED at v${result.version} | SHA256 ${result.sha256}\n`
+        : `${result.llm_diff}\nVERSION v${result.version} | SHA256 ${result.sha256}\n`;
+    }
     copy.disabled = false;
     void refreshFiles();
   } catch (e) { setError((e as Error).message); }

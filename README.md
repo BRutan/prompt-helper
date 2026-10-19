@@ -1,6 +1,6 @@
 # Prompterr
 
-Context-efficient source-file snapshots and diffs. Paste a **whole UTF-8 source file** into a web textbox, starting with a mandatory extension-appropriate `Path:` comment. Prompterr stores the original file once, tracks later versions, and returns only changed hunks with old/new line numbers. Identical submissions do not create revisions. There are **three service-local Dockerfiles and three Compose services** sharing the `prompterr-backend` network.
+Context-efficient source-file snapshots and diffs. Paste a **UTF-8 source file or multi-file SOURCE_DIR / FILE dump** into a web textbox, starting with a mandatory extension-appropriate `Path:` comment. Prompterr stores the original file once, tracks later versions, and returns only changed hunks with old/new line numbers. Identical submissions do not create revisions. There are **three service-local Dockerfiles and three Compose services** sharing the `prompterr-backend` network.
 
 ## Repository layout
 
@@ -39,7 +39,7 @@ The Compose builds use `context: ./frontend`, `context: ./backend`, and `context
 | Service | Container | Technology | Responsibility |
 |---|---|---|---|
 | frontend | `prompterr-frontend` | TypeScript, JavaScript, Vite (build), Nginx (serve) | Client-side validation; source textbox; guttered changes; copy-for-LLM button; extension filtering |
-| backend | `prompterr-backend` | Go 1.23, native Git histogram diff | Independent header validation, SHA-256 deduplication, bounded diff computation, HTTP API |
+| backend | `prompterr-backend` | Go 1.23, native Git histogram diff | Independent header validation, SHA-256 deduplication, line-based diff computation, HTTP API |
 | db | `prompterr-db` | PostgreSQL 17 | Original baseline, latest materialized content, immutable versioned patches, extension index |
 
 Only the frontend is bound to a host port (`127.0.0.1:5173` by default). The backend and PostgreSQL remain internal to the bridge network. The filename is **an identifier**; the application never reads/writes the named file in the host filesystem. Content is not executed. The backend never sends code to external AI APIs.
@@ -149,6 +149,7 @@ Routes:
 
 | Method | Path | Purpose |
 |---|---|---|
+| POST | `/api/v1/files/batch-diff` | `{ "content": "..." }` → split SOURCE_DIR / FILE sections, persist atomically, return combined numbered diff |
 | POST | `/api/v1/files/diff` | `{ "content": "..." }` → baseline / updated / unchanged, unified and LLM diff, numbered lines |
 | GET | `/api/v1/files?extension=.ts&limit=30` | Latest files, optional extension filter; limit 1–100 |
 | GET | `/api/v1/files/current?path=src/hello.ts` | Full current file for context refresh |
@@ -185,7 +186,7 @@ Response example after a change:
 - Native `git diff --no-index --diff-algorithm=histogram --unified=3` computes efficient line diffs in an isolated temporary directory; temporary input files are deleted after each request. The external `git` process is not an LLM.
 - PostgreSQL `files(path)` is unique and `files(extension, updated_at)` is indexed, with `(file_id, version)` indexed in the revision table.
 - Transactions use a per-file advisory lock to serialize concurrent writes and prevent divergent versions.
-- A single file is bounded by `PROMPTERR_MAX_FILE_BYTES` (default 2 MiB); the default API timeout is 45 seconds.
+- There is no application-level request-size or file-count cap. Resource limits depend on the host, Docker, the browser, and PostgreSQL; the API request lasts until completion or client cancellation.
 - Every new version stores its *full current content once* plus a diff record; unchanged versions add no rows. The first stored baseline is also retained.
 
 ## Safety and deployment
@@ -205,3 +206,35 @@ cd frontend && npm install && npm run build && cd ..
 ```
 
 Container builds require network access to download Go modules and npm packages the first time. Offline-only CI must prepopulate dependency caches or vendor modules.
+
+## Multi-file dumps (unrestricted input size)
+
+Paste a concatenated dump containing repeated framed `SOURCE_DIR:` and `FILE:` sections, with an extension-appropriate embedded `Path:` comment at the beginning of each file:
+
+```text
+================================================================================
+SOURCE_DIR: /Users/example/project/src
+FILE: App/ContentView.swift
+================================================================================
+
+// Path: src/App/ContentView.swift
+struct ContentView {}
+
+================================================================================
+SOURCE_DIR: /Users/example/project/src
+FILE: App/App.swift
+================================================================================
+
+// Path: src/App/App.swift
+struct App {}
+```
+
+`POST /api/v1/files/batch-diff` with `{ "content": "<whole dump>" }` splits and independently validates each file, then writes revisions atomically (if one fails, none are written). It uses the **absolute concatenation of SOURCE_DIR and FILE** as the database key, preserving nested directory structure. The response returns all file statuses and a single `llm_diff` that begins with the path tree and includes changed file contents/hunks with both line numbers. Unchanged files are not re-sent in the changed hunks. The browser displays the entire combined diff and its Copy for LLM button copies that diff.
+
+The frontend, Nginx, and Go backend have no application-configured maximum input size or maximum files per batch. Available RAM, disk capacity, network, and PostgreSQL limits still apply. The frontend is bound to localhost by default; **do not expose an unrestricted upload endpoint publicly without adding authentication and upstream resource controls**.
+
+Rebuild both the frontend and backend after applying this change:
+
+```sh
+make build-up
+```

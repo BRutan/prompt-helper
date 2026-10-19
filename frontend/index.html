@@ -18,11 +18,11 @@
       <main>
         <section class="intro">
           <h2>Send the changes. <em>Not the whole file.</em></h2>
-          <p>Paste a complete text file with a valid <code>Path:</code> comment. The first submission is the baseline; later submissions return only changed lines, numbered for LLMs.</p>
+          <p>Paste one file with a valid <code>Path:</code> comment, or a concatenated <code>SOURCE_DIR:</code> / <code>FILE:</code> dump. Each file gets its own history; the combined diff preserves paths and line numbers.</p>
         </section>
         <div class="main-grid">
           <section class="panel editor-panel">
-            <div class="panel-head"><div><h3>File input</h3><p>Complete source file · UTF-8 · max 2 MiB by default</p></div><span id="input-lang" class="tag">Awaiting source</span></div>
+            <div class="panel-head"><div><h3>File input</h3><p>Single file or SOURCE_DIR / FILE batch · UTF-8 · no application size limit</p></div><span id="input-lang" class="tag">Awaiting source</span></div>
             <div class="examples">Header examples:
               <button type="button" data-example="ts">TypeScript</button>
               <button type="button" data-example="py">Python</button>
@@ -31,7 +31,7 @@
             </div>
             <label for="source">Paste source code</label>
             <textarea id="source" spellcheck="false" aria-describedby="input-help" placeholder="// Path: src/components/App.tsx&#10;export function App() {&#10;  return 'hello';&#10;}"></textarea>
-            <p id="input-help" class="hint">The first line must be an extension-appropriate comment with <code>Path:</code> and a directory-qualified filename. A shebang may come before it.</p>
+            <p id="input-help" class="hint">Single file: an extension-appropriate <code>Path:</code> header. Batch: separator lines enclosing <code>SOURCE_DIR:</code> and <code>FILE:</code>, followed by each file’s <code>Path:</code> header. No application-level input-size limit.</p>
             <div class="actions"><button id="submit" class="primary" type="button">Store &amp; compare <span>⌘ ↵</span></button><span id="input-count">0 chars</span></div>
             <div id="error" role="alert" class="error" hidden></div>
           </section>

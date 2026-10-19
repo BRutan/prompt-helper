@@ -8,7 +8,7 @@ import (
 
 func TestInitial(t *testing.T) {
 	r := Initial("src/a.py", "# Path: src/a.py\nprint('ok')\n")
-	if r.Additions != 2 || len(r.Lines) != 2 || !strings.Contains(r.LLM, "BASELINE v1") {
+	if r.Additions != 2 || len(r.Lines) != 2 || !strings.Contains(r.LLM, "BASELINE v1") || !strings.Contains(r.Unified, "+++ b/src/a.py") {
 		t.Fatalf("unexpected baseline: %#v", r)
 	}
 }

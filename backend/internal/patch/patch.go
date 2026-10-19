@@ -47,12 +47,21 @@ func countLines(content string) []string {
 
 func Initial(path, text string) Result {
 	var r Result
-	var output strings.Builder
+	var output, unified strings.Builder
 	fmt.Fprintf(&output, "FILE %s | BASELINE v1 (full content)\n", path)
-	for i, line := range countLines(text) {
+	lines := countLines(text)
+	// A new-file patch is useful for both a single file and aggregated batches.
+	// Keep the complete path structure in the +++ header.
+	fmt.Fprintf(&unified, "--- /dev/null\n+++ b/%s\n@@ -0,0 +1,%d @@\n", strings.TrimPrefix(path, "/"), len(lines))
+	for i, line := range lines {
 		r.Lines = append(r.Lines, Line{Kind: "added", NewLine: ptr(i + 1), Text: line})
 		fmt.Fprintf(&output, "    %6d + %s\n", i+1, line)
+		fmt.Fprintf(&unified, "+%s\n", line)
 	}
+	if text != "" && !strings.HasSuffix(text, "\n") {
+		unified.WriteString("\\ No newline at end of file\n")
+	}
+	r.Unified = unified.String()
 	r.LLM = output.String()
 	r.Additions = len(r.Lines)
 	return r

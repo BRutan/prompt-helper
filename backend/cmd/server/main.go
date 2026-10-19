@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -20,13 +22,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/prompterr/prompterr/backend/internal/batch"
 	"github.com/prompterr/prompterr/backend/internal/header"
 	"github.com/prompterr/prompterr/backend/internal/patch"
 )
 
 type app struct {
-	db       *pgxpool.Pool
-	maxBytes int64
+	db *pgxpool.Pool
 }
 
 type diffRequest struct {
@@ -70,43 +72,101 @@ func hash(text string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (a *app) diff(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodPost) {
-		return
-	}
+// readPayload streams JSON decoding without an application-imposed byte limit.
+// PostgreSQL and the host still have physical memory/storage limits.
+func readPayload(w http.ResponseWriter, r *http.Request) (string, bool) {
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		sendError(w, 415, "Content-Type must be application/json")
-		return
+		return "", false
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, a.maxBytes+65536)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	var request diffRequest
 	if err := dec.Decode(&request); err != nil {
-		sendError(w, 400, "invalid JSON or oversized request: "+err.Error())
-		return
+		sendError(w, 400, "invalid JSON request: "+err.Error())
+		return "", false
 	}
-	// Reject trailing JSON rather than silently ignoring additional requests.
 	var trailing any
 	if err := dec.Decode(&trailing); err == nil {
 		sendError(w, 400, "only one JSON object is allowed")
-		return
+		return "", false
 	} else if !errors.Is(err, io.EOF) {
 		sendError(w, 400, "invalid trailing JSON data")
+		return "", false
+	}
+	return request.Content, true
+}
+
+// store writes exactly one revision within the caller's transaction. The
+// persistent path may be a SOURCE_DIR+FILE absolute path, even if the embedded
+// Path header is repo-relative. File content is not rewritten.
+func (a *app) store(ctx context.Context, tx pgx.Tx, file header.File, content string) (diffResponse, error) {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, file.Path); err != nil {
+		return diffResponse{}, fmt.Errorf("lock %s: %w", file.Path, err)
+	}
+	var id, version int64
+	var before, previousSHA string
+	err := tx.QueryRow(ctx, `SELECT id, version, current_content, current_sha256
+        FROM files WHERE path=$1 FOR UPDATE`, file.Path).Scan(&id, &version, &before, &previousSHA)
+	newSHA := hash(content)
+	if errors.Is(err, pgx.ErrNoRows) {
+		result := patch.Initial(file.Path, content)
+		err = tx.QueryRow(ctx, `INSERT INTO files
+            (path, extension, initial_content, current_content, current_sha256, version)
+            VALUES ($1,$2,$3,$3,$4,1) RETURNING id`,
+			file.Path, file.Extension, content, newSHA).Scan(&id)
+		if err == nil {
+			_, err = tx.Exec(ctx, `INSERT INTO file_revisions
+                (file_id,version,kind,current_sha256,additions,deletions)
+                VALUES ($1,1,'initial',$2,$3,0)`, id, newSHA, result.Additions)
+		}
+		if err != nil {
+			return diffResponse{}, fmt.Errorf("save baseline %s: %w", file.Path, err)
+		}
+		return diffResponse{Path: file.Path, Extension: file.Extension, Status: "created", Version: 1, SHA256: newSHA, Result: result}, nil
+	}
+	if err != nil {
+		return diffResponse{}, fmt.Errorf("query file %s: %w", file.Path, err)
+	}
+	if previousSHA == newSHA && before == content {
+		return diffResponse{Path: file.Path, Extension: file.Extension, Status: "unchanged", Version: version,
+			SHA256: newSHA, PreviousSHA256: previousSHA, Result: patch.Result{Lines: []patch.Line{}}}, nil
+	}
+	result, err := patch.Diff(ctx, file.Path, before, content)
+	if err != nil {
+		return diffResponse{}, fmt.Errorf("diff %s: %w", file.Path, err)
+	}
+	nextVersion := version + 1
+	_, err = tx.Exec(ctx, `UPDATE files
+        SET current_content=$2, current_sha256=$3, version=$4, updated_at=now()
+        WHERE id=$1`, id, content, newSHA, nextVersion)
+	if err == nil {
+		_, err = tx.Exec(ctx, `INSERT INTO file_revisions
+            (file_id,version,kind,previous_sha256,current_sha256,unified_diff,additions,deletions)
+            VALUES ($1,$2,'diff',$3,$4,$5,$6,$7)`,
+			id, nextVersion, previousSHA, newSHA, result.Unified, result.Additions, result.Deletions)
+	}
+	if err != nil {
+		return diffResponse{}, fmt.Errorf("save diff %s: %w", file.Path, err)
+	}
+	return diffResponse{Path: file.Path, Extension: file.Extension, Status: "updated", Version: nextVersion,
+		PreviousSHA256: previousSHA, SHA256: newSHA, Result: result}, nil
+}
+
+func (a *app) diff(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
-	if int64(len(request.Content)) > a.maxBytes {
-		sendError(w, 413, fmt.Sprintf("file exceeds MAX_FILE_BYTES (%d)", a.maxBytes))
+	content, ok := readPayload(w, r)
+	if !ok {
 		return
 	}
-	file, err := header.Parse(request.Content)
+	file, err := header.Parse(content)
 	if err != nil {
 		sendError(w, 422, err.Error())
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
-	defer cancel()
+	ctx := r.Context()
 	tx, err := a.db.Begin(ctx)
 	if err != nil {
 		log.Printf("begin: %v", err)
@@ -114,78 +174,133 @@ func (a *app) diff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(context.Background())
-	// Serialize same-path writes, including competing first uploads.
-	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, file.Path); err != nil {
-		log.Printf("lock: %v", err)
-		sendError(w, 500, "cannot lock file")
-		return
-	}
-	var id, version int64
-	var before, previousSHA string
-	err = tx.QueryRow(ctx, `SELECT id, version, current_content, current_sha256
-                            FROM files WHERE path=$1 FOR UPDATE`, file.Path).
-		Scan(&id, &version, &before, &previousSHA)
-	newSHA := hash(request.Content)
-	if errors.Is(err, pgx.ErrNoRows) {
-		result := patch.Initial(file.Path, request.Content)
-		err = tx.QueryRow(ctx, `INSERT INTO files
-            (path, extension, initial_content, current_content, current_sha256, version)
-            VALUES ($1,$2,$3,$3,$4,1) RETURNING id`,
-			file.Path, file.Extension, request.Content, newSHA).Scan(&id)
-		if err == nil {
-			_, err = tx.Exec(ctx, `INSERT INTO file_revisions
-                (file_id,version,kind,current_sha256,additions,deletions)
-                VALUES ($1,1,'initial',$2,$3,0)`, id, newSHA, result.Additions)
-		}
-		if err != nil {
-			log.Printf("insert baseline: %v", err)
-			sendError(w, 500, "cannot save baseline")
-			return
-		}
-		if err = tx.Commit(ctx); err != nil {
-			log.Printf("commit: %v", err)
-			sendError(w, 500, "cannot commit baseline")
-			return
-		}
-		jsonResponse(w, 201, diffResponse{Path: file.Path, Extension: file.Extension, Status: "created", Version: 1, SHA256: newSHA, Result: result})
-		return
-	}
+	result, err := a.store(ctx, tx, file, content)
 	if err != nil {
-		log.Printf("query file: %v", err)
-		sendError(w, 500, "cannot look up file")
+		log.Printf("store: %v", err)
+		sendError(w, 500, "cannot save file revision")
 		return
 	}
-	if previousSHA == newSHA && before == request.Content {
-		jsonResponse(w, 200, diffResponse{Path: file.Path, Extension: file.Extension, Status: "unchanged", Version: version, SHA256: newSHA, PreviousSHA256: previousSHA, Result: patch.Result{Lines: []patch.Line{}}})
-		return
-	}
-	result, err := patch.Diff(ctx, file.Path, before, request.Content)
-	if err != nil {
-		log.Printf("diff: %v", err)
-		sendError(w, 500, "cannot compute diff")
-		return
-	}
-	nextVersion := version + 1
-	_, err = tx.Exec(ctx, `UPDATE files
-        SET current_content=$2, current_sha256=$3, version=$4, updated_at=now()
-        WHERE id=$1`, id, request.Content, newSHA, nextVersion)
-	if err == nil {
-		_, err = tx.Exec(ctx, `INSERT INTO file_revisions
-          (file_id,version,kind,previous_sha256,current_sha256,unified_diff,additions,deletions)
-          VALUES ($1,$2,'diff',$3,$4,$5,$6,$7)`,
-			id, nextVersion, previousSHA, newSHA, result.Unified, result.Additions, result.Deletions)
-	}
-	if err != nil {
-		log.Printf("save diff: %v", err)
-		sendError(w, 500, "cannot persist diff")
-		return
-	}
-	if err = tx.Commit(ctx); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		log.Printf("commit: %v", err)
-		sendError(w, 500, "cannot commit diff")
+		sendError(w, 500, "cannot commit file")
 		return
 	}
-	jsonResponse(w, 200, diffResponse{Path: file.Path, Extension: file.Extension, Status: "updated", Version: nextVersion, PreviousSHA256: previousSHA, SHA256: newSHA, Result: result})
+	status := http.StatusOK
+	if result.Status == "created" {
+		status = http.StatusCreated
+	}
+	jsonResponse(w, status, result)
+}
+
+// The combined response contains one version per file and a full path-preserving
+// LLM diff. Unchanged files are omitted from the concatenated changed hunks.
+type batchFileStatus struct {
+	Path      string `json:"path"`
+	Extension string `json:"extension"`
+	Status    string `json:"status"`
+	Version   int64  `json:"version"`
+	SHA256    string `json:"sha256"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+}
+
+type batchDiffResponse struct {
+	Files       []batchFileStatus `json:"files"`
+	Total       int               `json:"total"`
+	Changed     int               `json:"changed"`
+	Unchanged   int               `json:"unchanged"`
+	Additions   int               `json:"additions"`
+	Deletions   int               `json:"deletions"`
+	LLMDiff     string            `json:"llm_diff"`
+	UnifiedDiff string            `json:"unified_diff"`
+}
+
+func composeBatch(results []diffResponse) batchDiffResponse {
+	output := batchDiffResponse{Files: make([]batchFileStatus, 0, len(results)), Total: len(results)}
+	var tree, llm, unified strings.Builder
+	// Group by actual parent directory while retaining full absolute paths.
+	order := make([]int, len(results))
+	for i := range results {
+		order[i] = i
+	}
+	sort.Slice(order, func(i, j int) bool { return results[order[i]].Path < results[order[j]].Path })
+	fmt.Fprintln(&tree, "SOURCE FILE TREE (absolute paths):")
+	lastDir := ""
+	for _, idx := range order {
+		result := results[idx]
+		output.Files = append(output.Files, batchFileStatus{Path: result.Path, Extension: result.Extension, Status: result.Status, Version: result.Version, SHA256: result.SHA256, Additions: result.Additions, Deletions: result.Deletions})
+		dir := path.Dir(result.Path)
+		if dir != lastDir {
+			fmt.Fprintf(&tree, "%s/\n", strings.TrimSuffix(dir, "/"))
+			lastDir = dir
+		}
+		fmt.Fprintf(&tree, "  %s [v%d %s]\n", path.Base(result.Path), result.Version, result.Status)
+		output.Additions += result.Additions
+		output.Deletions += result.Deletions
+		if result.Status == "unchanged" {
+			output.Unchanged++
+		} else {
+			output.Changed++
+		}
+	}
+	fmt.Fprintf(&llm, "BATCH DIFF | %d files | %d changed | %d unchanged\n\n", output.Total, output.Changed, output.Unchanged)
+	llm.WriteString(tree.String())
+	llm.WriteString("\nCHANGED FILES (old/new line numbers):\n")
+	for _, idx := range order {
+		result := results[idx]
+		if result.Status == "unchanged" {
+			continue
+		}
+		fmt.Fprintf(&llm, "\n=== %s ===\n%sVERSION v%d | SHA256 %s\n", result.Path, result.LLM, result.Version, result.SHA256)
+		if result.Unified != "" {
+			unified.WriteString(result.Unified)
+			unified.WriteByte('\n')
+		}
+	}
+	output.LLMDiff = llm.String()
+	output.UnifiedDiff = unified.String()
+	return output
+}
+
+func (a *app) batchDiff(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	content, ok := readPayload(w, r)
+	if !ok {
+		return
+	}
+	files, err := batch.Parse(content)
+	if err != nil {
+		sendError(w, 422, err.Error())
+		return
+	}
+	// Lock canonical paths in stable order to avoid deadlock between concurrent batches.
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	ctx := r.Context()
+	tx, err := a.db.Begin(ctx)
+	if err != nil {
+		log.Printf("batch begin: %v", err)
+		sendError(w, 503, "database unavailable")
+		return
+	}
+	defer tx.Rollback(context.Background())
+	results := make([]diffResponse, 0, len(files))
+	for _, f := range files {
+		result, err := a.store(ctx, tx, header.File{Path: f.Path, Extension: f.Extension}, f.Content)
+		if err != nil {
+			log.Printf("batch store: %v", err)
+			sendError(w, 500, "cannot save batch (transaction rolled back)")
+			return
+		}
+		results = append(results, result)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		log.Printf("batch commit: %v", err)
+		sendError(w, 500, "cannot commit batch")
+		return
+	}
+	jsonResponse(w, 200, composeBatch(results))
 }
 
 func (a *app) files(w http.ResponseWriter, r *http.Request) {
@@ -327,10 +442,6 @@ func main() {
 		}
 		return
 	}
-	maxBytes, err := strconv.ParseInt(env("MAX_FILE_BYTES", "2097152"), 10, 64)
-	if err != nil || maxBytes < 1024 || maxBytes > 32*1024*1024 {
-		log.Fatal("MAX_FILE_BYTES must be between 1024 and 33554432")
-	}
 	dbConfig, err := pgxpool.ParseConfig(fmt.Sprintf("host=%s port=5432 dbname=%s user=%s sslmode=disable",
 		env("DB_HOST", "db"), env("DB_NAME", "prompterr"), env("DB_USER", "prompterr")))
 	if err != nil {
@@ -349,7 +460,7 @@ func main() {
 		log.Fatalf("PostgreSQL unavailable: %v", err)
 	}
 	cancel()
-	a := &app{db: db, maxBytes: maxBytes}
+	a := &app{db: db}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet) {
@@ -364,11 +475,12 @@ func main() {
 		jsonResponse(w, 200, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("/api/v1/files/diff", a.diff)
+	mux.HandleFunc("/api/v1/files/batch-diff", a.batchDiff)
 	mux.HandleFunc("/api/v1/files", a.files)
 	mux.HandleFunc("/api/v1/files/history", a.history)
 	mux.HandleFunc("/api/v1/files/current", a.current)
 	addr := env("LISTEN_ADDR", ":8080")
-	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second}
+	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 120 * time.Second}
 	stopCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go func() {
@@ -377,7 +489,7 @@ func main() {
 		defer cancel()
 		_ = server.Shutdown(ctx)
 	}()
-	log.Printf("Prompterr API listening on %s max_file_bytes=%d", addr, maxBytes)
+	log.Printf("Prompterr API listening on %s (no application-level body-size cap)", addr)
 	err = server.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)

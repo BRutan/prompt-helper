@@ -1,0 +1,6 @@
+frontend/vite.config.ts
+frontend/src/main.ts
+frontend/src/renderDiff.d.ts
+frontend/src/renderDiff.js
+Makefile
+db/schema.sql

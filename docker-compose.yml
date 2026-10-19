@@ -23,7 +23,6 @@ services:
       DB_NAME: prompterr
       DB_USER: prompterr
       DB_PASSWORD: ${PROMPTERR_DB_PASSWORD:-prompterr_dev_only}
-      MAX_FILE_BYTES: ${PROMPTERR_MAX_FILE_BYTES:-2097152}
       LISTEN_ADDR: :8080
     depends_on:
       db:

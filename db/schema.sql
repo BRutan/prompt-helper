@@ -1,3 +1,4 @@
+-- Path: db/schema.sql
 -- Prompterr v1: immutable baseline, materialized latest, append-only revisions.
 CREATE TABLE IF NOT EXISTS files (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
