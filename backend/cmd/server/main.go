@@ -486,6 +486,9 @@ func main() {
 		log.Fatalf("PostgreSQL unavailable: %v", err)
 	}
 	cancel()
+	if err := ensureChatSessionSchema(context.Background(), db); err != nil {
+		log.Fatalf("chat session migration failed: %v", err)
+	}
 	a := &app{db: db}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
@@ -502,6 +505,7 @@ func main() {
 	})
 	mux.HandleFunc("/api/v1/files/process-upload", a.processUpload)
 	mux.HandleFunc("/api/v1/files/diff", a.diff)
+	mux.HandleFunc("/api/v1/chat-sessions/diff", a.chatSessionDiff)
 	mux.HandleFunc("/api/v1/files/batch-diff", a.batchDiff)
 	mux.HandleFunc("/api/v1/files", a.files)
 	mux.HandleFunc("/api/v1/files/history", a.history)

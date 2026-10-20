@@ -51,7 +51,14 @@ func TestParseForPath(t *testing.T) {
 	if err != nil || file.Path != wanted || file.Extension != ".tsx" {
 		t.Fatalf("file=%+v err=%v", file, err)
 	}
-	for _, invalid := range []string{"../oops.tsx", "/a/../b.tsx", "/a/file.json", "/a/\x00file.tsx", "/a//file.tsx"} {
+	jsonFile, err := ParseForPath(`{"enabled":true}`, "/a/file.json")
+	if err != nil || jsonFile.Extension != ".json" {
+		t.Fatalf("framed JSON=%+v err=%v", jsonFile, err)
+	}
+	if _, err := Parse(`{"enabled":true}`); err == nil {
+		t.Fatal("unframed JSON without Path header must fail")
+	}
+	for _, invalid := range []string{"../oops.tsx", "/a/../b.tsx", "/a/\x00file.tsx", "/a//file.tsx"} {
 		if _, err := ParseForPath(src, invalid); err == nil {
 			t.Errorf("unsafe frame path accepted: %q", invalid)
 		}

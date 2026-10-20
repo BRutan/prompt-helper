@@ -33,3 +33,28 @@ CREATE TABLE IF NOT EXISTS file_revisions (
 
 CREATE INDEX IF NOT EXISTS file_revisions_file_version_idx
   ON file_revisions (file_id, version DESC);
+
+-- ChatGPT/Claude conversations have isolated file baselines and one current diff.
+CREATE TABLE IF NOT EXISTS chat_sessions (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  provider TEXT NOT NULL CHECK (provider IN ('chatgpt', 'claude')),
+  conversation_id TEXT NOT NULL,
+  latest_input_sha256 CHAR(64),
+  latest_diff JSONB,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(provider, conversation_id)
+);
+CREATE TABLE IF NOT EXISTS chat_session_files (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  session_id BIGINT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  path TEXT NOT NULL,
+  extension TEXT NOT NULL,
+  initial_content TEXT NOT NULL,
+  current_content TEXT NOT NULL,
+  current_sha256 CHAR(64) NOT NULL,
+  version BIGINT NOT NULL DEFAULT 1 CHECK (version >= 1),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(session_id, path)
+);
+CREATE INDEX IF NOT EXISTS chat_session_files_session_id_idx ON chat_session_files(session_id);

@@ -177,7 +177,8 @@ func ParseForPath(content, fullPath string) (File, error) {
 		return File{}, errors.New("SOURCE_DIR + FILE must form a clean absolute file path")
 	}
 	ext := extension(fullPath)
-	if _, ok := comments[ext]; !ok && ext != ".env" && ext != ".gitignore" {
+	// Framed JSON is safe: the SOURCE_DIR / FILE identity needs no comment.
+	if _, ok := comments[ext]; !ok && ext != ".env" && ext != ".gitignore" && ext != ".json" {
 		return File{}, fmt.Errorf("unsupported extension %q (strict JSON has no comment syntax; use .jsonc)", ext)
 	}
 	return File{Path: fullPath, Extension: ext}, nil

@@ -327,3 +327,5 @@ annotate-paths:
 	fi; \
 	printf '\nProcessed %s selected files; updated %s; skipped %s.\n' \
 		"$$TOTAL" "$$UPDATED" "$$SKIPPED"
+
+include make/concat.mk
