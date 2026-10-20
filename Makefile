@@ -13,6 +13,7 @@ help:
 	@printf '  make build-backend  | up-backend  | down-backend  | build-up-backend  | down-up-backend\n'
 	@printf '  make build-db       | up-db       | down-db       | build-up-db       | down-up-db\n'
 	@printf '  make status | logs | clean | annotate-paths\n'
+	@printf '  make build-chrome-plugin | concat-files | concat-all-files\n'
 	@printf '\nFlags: make build NO_CACHE=1; make logs SERVICE=backend\n'
 	@printf '       make annotate-paths [DIR=src] [FILES=path/to/file.py,...] [EXTS=py,sql,...]\n'
 	@printf '       make annotate-paths [SKIP_DIRS=folder1,folder2] [STARTING_FROM_LAST=1]\n'
@@ -329,3 +330,6 @@ annotate-paths:
 		"$$TOTAL" "$$UPDATED" "$$SKIPPED"
 
 include make/concat.mk
+
+# Auto-load other make fragments without loading concat.mk twice.
+-include $(filter-out $(MAKEFILE_LIST),$(wildcard make/*.mk))
