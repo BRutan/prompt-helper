@@ -2,6 +2,8 @@
 // Watch the assistant's post-submission message for completion, without
 // treating an idle text-only response or ongoing stream as a patch file.
 (() => {
+  if (globalThis.__promptHelperMonitorActive) return;
+  globalThis.__promptHelperMonitorActive = true;
   const assistantSelectors = {
     chatgpt: '[data-message-author-role="assistant"]',
     claude: '[data-testid="assistant-message"], [data-testid="message-content"].font-claude-message, .font-claude-message'

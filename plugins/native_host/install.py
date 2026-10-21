@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Register a native Chrome host for this installed unpacked extension (macOS)."""
+"""
+Path: plugins/native_host/install.py
+Register a native Chrome host for this installed unpacked extension (macOS)."""
 import argparse
 import json
 from pathlib import Path

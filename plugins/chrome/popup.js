@@ -1,5 +1,9 @@
 // Path: plugins/chrome/popup.js
+// Navigation-only popup. Diffs are processed in background and never rendered here.
 const $ = id => document.getElementById(id);
+const name = {chatgpt:'ChatGPT',claude:'Claude'};
+let view = 'home';
+let enabled = true;
 function call(message) {
   return new Promise((resolve, reject) => chrome.runtime.sendMessage(message, response => {
     if (chrome.runtime.lastError) reject(Error(chrome.runtime.lastError.message));
@@ -8,37 +12,110 @@ function call(message) {
   }));
 }
 function showError(error) { $('error').textContent = error?.message || String(error); }
-async function init() {
+function clearError() { $('error').textContent = ''; }
+function display() {
+  for (const page of ['home','sessions','settings']) {
+    $(page + '-view').classList.toggle('hidden',view !== page);
+  }
+}
+function showToggle() {
+  $('enabled-toggle').setAttribute('aria-pressed',String(enabled));
+  $('enabled-toggle').setAttribute('aria-label',`Turn prompt-helper ${enabled?'off':'on'}`);
+  $('enabled-state').textContent = enabled ? 'ON' : 'OFF';
+}
+function bounds() {
+  return {left:window.screen.availLeft,top:window.screen.availTop,
+    width:window.screen.availWidth,height:window.screen.availHeight};
+}
+async function switchView(target) {
+  view = target; display(); clearError();
+  if (target === 'sessions') await refreshSessions();
+}
+function renderSessions(sessions) {
+  const counts = {chatgpt:0,claude:0}, seen = {chatgpt:new Set(),claude:new Set()};
+  for (const item of sessions) {
+    if (!seen[item.provider]) continue;
+    if (!seen[item.provider].has(item.conversation_id)) {
+      seen[item.provider].add(item.conversation_id); counts[item.provider]++;
+    }
+  }
+  $('chatgpt-count').textContent = String(counts.chatgpt);
+  $('claude-count').textContent = String(counts.claude);
+  const list = $('session-list'); list.replaceChildren();
+  for (const provider of ['chatgpt','claude']) {
+    const group = sessions.filter(s=>s.provider===provider);
+    if (!group.length) continue;
+    const heading = document.createElement('h2'); heading.textContent = name[provider]; list.append(heading);
+    for (const entry of group) {
+      const button = document.createElement('button'); button.className='session'; button.type='button'; button.setAttribute('role','listitem');
+      const title = document.createElement('span');title.className='name';title.textContent=entry.title || `${name[provider]} conversation`;
+      const detail = document.createElement('small');detail.textContent=`${entry.conversation_id} · Window ${entry.window_id}${entry.active?' · Active':''}`;
+      button.append(title,detail);
+      button.addEventListener('click',async()=>{
+        try { clearError(); await call({type:'focus-session',tab_id:entry.tab_id}); }
+        catch(error) { showError(error); }
+      });
+      list.append(button);
+    }
+  }
+  if (!sessions.length) {
+    const empty=document.createElement('p');empty.className='muted';empty.textContent='No saved ChatGPT or Claude conversations are currently open.';list.append(empty);
+  }
+}
+async function refreshSessions() {
   try {
-    const { session, state, config } = await call({ type: 'get-status' });
-    $('where').textContent = session ? `${session.provider} · ${session.conversation_id}` : 'Open an existing ChatGPT or Claude conversation.';
-    $('endpoint').value = config.endpoint;
+    const result = await call({type:'get-open-sessions'});
+    renderSessions(result.sessions || []);
+    clearError();
+  } catch(error) { showError(error); }
+}
+async function init() {
+  if (new URLSearchParams(location.search).get('view') === 'sessions') {
+    document.body.classList.add('standalone'); view = 'sessions';
+  }
+  display();
+  try {
+    // Request configuration only: no source, diff text, or session state.
+    const config = await call({type:'get-popup-config'});
+    enabled = config.enabled !== false;
+    showToggle();
     $('minimum').value = config.minChars;
     $('replace').checked = config.replaceOnPaste;
     $('symbol-compression').checked = Boolean(config.symbolCompression);
-    if (state) {
-      $('status').textContent = `${state.changed} changed file(s) · ${state.additions} additions · ${state.deletions} deletions`;
-      $('diff').value = state.session_diff || '';
-    }
-  } catch (error) { showError(error); }
+    if (view === 'sessions') await refreshSessions();
+  } catch(error) { showError(error); }
 }
-$('load').addEventListener('click', async () => {
+$('sessions-button').addEventListener('click',()=>void switchView('sessions'));
+$('settings-button').addEventListener('click',()=>void switchView('settings'));
+$('sessions-back').addEventListener('click',()=>void switchView('home'));
+$('settings-back').addEventListener('click',()=>void switchView('home'));
+$('refresh-sessions').addEventListener('click',()=>void refreshSessions());
+$('compact-sessions').addEventListener('click',async()=>{
   try {
-    const data = await call({ type: 'load-session' });
-    $('diff').value = data.session_diff?.llm_diff || '';
-    $('status').textContent = `Current session: ${data.session_diff?.changed ?? 0} changed file(s)`;
-    $('error').textContent = '';
-  } catch (error) { showError(error); }
+    clearError(); const result=await call({type:'compact-sessions',screen:bounds()});
+    $('session-list').setAttribute('aria-label',`${result.count} compact session windows opened`);
+    await refreshSessions();
+  } catch(error) { showError(error); }
 });
-$('copy').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText($('diff').value); $('status').textContent = 'Copied current session diff.'; }
-  catch (error) { showError(error); }
+$('dashboard-button').addEventListener('click',async()=>{
+  try { clearError(); await call({type:'open-dashboard-window',screen:bounds()}); }
+  catch(error) { showError(error); }
 });
-$('save').addEventListener('click', async () => {
+$('enabled-toggle').addEventListener('click',async()=>{
+  const toggle = $('enabled-toggle');
+  toggle.disabled = true;
   try {
-    await call({ type: 'set-options', endpoint: $('endpoint').value,
-      minChars: Number($('minimum').value), replaceOnPaste: $('replace').checked, symbolCompression: $('symbol-compression').checked });
-    $('status').textContent = 'Settings saved.'; $('error').textContent = '';
-  } catch (error) { showError(error); }
+    const result = await call({type:'set-enabled',enabled:!enabled});
+    enabled = result.enabled;
+    showToggle();clearError();
+  } catch(error) { showError(error); }
+  finally { toggle.disabled=false; }
 });
-init();
+$('save').addEventListener('click',async()=>{
+  try {
+    await call({type:'set-options',minChars:Number($('minimum').value),
+      replaceOnPaste:$('replace').checked,symbolCompression:$('symbol-compression').checked});
+    $('settings-status').textContent='Settings saved.';clearError();
+  } catch(error) { $('settings-status').textContent='';showError(error); }
+});
+void init();

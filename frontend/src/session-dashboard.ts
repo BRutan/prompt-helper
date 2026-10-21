@@ -156,7 +156,7 @@ async function stage(){
     const gitDiff=active?normalizeGitDiffPaths(prepared.preview.unified_diff||'',prepared.preview.files,targetRepo.value.trim()):'';
     if(active&&!gitDiff)throw Error('No Git diff is available to compress.');
     const packed=active?compressGitDiff(gitDiff,state.registry||{},s=>tokenCount(s,target.provider),original):null;
-    symbolRegistry=packed?.registry||{};
+    symbolRegistry=normalizeSessionStringRecords(packed?.registry||{});
     compressedGitDiff=packed?.diff||'';
     diff.textContent=active?compressedGitDiff:prepared.preview.llm_diff;
     if(active)symbolInfo.textContent=`${packed!.aliases} stored symbol mappings · ${packed!.savedTokens} estimated Git-diff tokens saved · ${packed!.active?'compressed':'no eligible token savings; sending original Git diff'}`;
@@ -213,3 +213,18 @@ void refresh();
 
 // Refresh response time and apply errors as the Chrome watcher records them.
 setInterval(()=>{if(selected())void loadHistory()},8000);
+
+// Normalize untrusted session metadata before treating it as a nested string map.
+function normalizeSessionStringRecords(value: unknown): Record<string, Record<string, string>> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
+  const records: Record<string, Record<string, string>> = {};
+  for (const [key, nested] of Object.entries(value)) {
+    if (nested === null || typeof nested !== "object" || Array.isArray(nested)) continue;
+    const fields: Record<string, string> = {};
+    for (const [field, fieldValue] of Object.entries(nested)) {
+      if (typeof fieldValue === "string") fields[field] = fieldValue;
+    }
+    records[key] = fields;
+  }
+  return records;
+}

@@ -1,14 +1,26 @@
 // Path: plugins/chrome/background.js
 import { sessionFromUrl, looksLikeSource, localBaseUrl } from './session.js';
 import { expandGitDiff, inverseForNative, normalizeGitDiffPaths } from './symbol-compression.js';
+import { watchBuilds } from './build-watch.js';
+import { IS_LOCAL, CONFIGURED_ENDPOINT } from './runtime-config.js';
+import { compactGrid } from './session-layout.js';
 
-const DEFAULTS = { endpoint: 'http://127.0.0.1:5173', minChars: 1000, replaceOnPaste: true, symbolCompression: false };
+const DEFAULTS = { enabled: true, minChars: 1000, replaceOnPaste: true, symbolCompression: false };
 const API_PATH = '/api/v1/chat-sessions/diff';
 const inFlight = new Map();
 const recent = new Map();
 
+function configuredEndpoint() {
+  if (IS_LOCAL) return localBaseUrl(CONFIGURED_ENDPOINT);
+  const url = new URL(CONFIGURED_ENDPOINT);
+  if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+    throw Error('Invalid build-time remote endpoint');
+  }
+  return url.origin;
+}
+
 async function settings() {
-  return { ...DEFAULTS, ...(await chrome.storage.local.get(DEFAULTS)) };
+  return { ...DEFAULTS, ...(await chrome.storage.local.get(DEFAULTS)), endpoint: configuredEndpoint() };
 }
 
 async function activeSender(sender) {
@@ -26,7 +38,7 @@ async function sha256(text) {
 }
 
 async function api(path, options = {}) {
-  const base = localBaseUrl((await settings()).endpoint);
+  const base = configuredEndpoint();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 125000);
   try {
@@ -46,6 +58,7 @@ async function processPaste(message, sender) {
   const session = await activeSender(sender);
   if (!session) throw Error('ChatGPT or Claude must be in the active, focused Chrome tab and have a saved conversation URL.');
   const config = await settings();
+  if (!config.enabled) throw Error('prompt-helper is turned off.');
   if (!looksLikeSource(message.content, Number(config.minChars) || DEFAULTS.minChars)) throw Error('Not a recognized long source dump.');
   const tabId = sender.tab.id;
   const key = `${session.provider}:${session.conversation_id}`;
@@ -80,14 +93,6 @@ async function processPaste(message, sender) {
   return operation;
 }
 
-async function getStatus(sender) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const session = sessionFromUrl(tab?.url || '');
-  const state = tab ? (await chrome.storage.session.get(`tab:${tab.id}`))[`tab:${tab.id}`] : null;
-  return { session, state: state?.session?.conversation_id === session?.conversation_id ? state : null,
-           config: await settings(), tab_id: tab?.id };
-}
-
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     switch (message?.type) {
@@ -100,19 +105,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'commit-symbol-registry': return dashboardRequest(message, sender);
       case 'assistant-response-complete': return responseCompleted(message.payload, sender);
       case 'assistant-response-timeout': return responseTimedOut(message.delivery_id, sender);
-      case 'get-status': return getStatus(sender);
+      case 'get-popup-config': return requireExtensionUI(sender).then(() => settings());
+      case 'set-enabled': {
+        await requireExtensionUI(sender);
+        if (typeof message.enabled !== 'boolean') throw Error('enabled must be a boolean');
+        await chrome.storage.local.set({ enabled: message.enabled });
+        if (!message.enabled) {
+          const tabs = await chrome.tabs.query({});
+          for (const tab of tabs) if (Number.isInteger(tab.id)) badge(tab.id, '', '#347b64');
+        }
+        return { enabled: message.enabled };
+      }
+      case 'get-open-sessions': return requireExtensionUI(sender).then(async () => ({ sessions: await listBrowserSessions(), config: await settings() }));
+      case 'focus-session': return requireExtensionUI(sender).then(() => focusBrowserSession(message.tab_id));
+      case 'compact-sessions': return requireExtensionUI(sender).then(() => compactBrowserSessions(message.screen));
+      case 'open-dashboard-window': return requireExtensionUI(sender).then(() => openDashboardCompanion(message.screen));
       case 'set-options': {
-        const endpoint = localBaseUrl(message.endpoint);
+        await requireExtensionUI(sender);
         const minChars = Number(message.minChars);
         if (!Number.isInteger(minChars) || minChars < 100 || minChars > 1000000) throw Error('minChars must be 100..1000000');
-        const options = { endpoint, minChars, replaceOnPaste: Boolean(message.replaceOnPaste), symbolCompression: Boolean(message.symbolCompression) };
+        const options = { minChars, replaceOnPaste: Boolean(message.replaceOnPaste), symbolCompression: Boolean(message.symbolCompression) };
         await chrome.storage.local.set(options);
         return options;
-      }
-      case 'load-session': {
-        const { session } = await getStatus(sender);
-        if (!session) throw Error('Open a saved ChatGPT or Claude conversation first.');
-        return api(API_PATH + '?' + new URLSearchParams(session));
       }
       default: throw Error('Unknown message type');
     }
@@ -124,18 +138,81 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // origin. Pages outside that origin cannot enumerate tabs or initiate sends.
 async function fromDashboard(sender) {
   const origin = new URL(sender?.url || sender?.tab?.url || 'about:blank').origin;
-  const expected = localBaseUrl((await settings()).endpoint);
+  const expected = configuredEndpoint();
   if (origin !== expected) throw Error('Dashboard origin does not match prompt-helper settings.');
 }
 async function listBrowserSessions() {
   const tabs = await chrome.tabs.query({});
   return tabs.map(tab => ({ ...sessionFromUrl(tab.url || ''), id: tab.id,
-    tab_id: tab.id, title: (tab.title || '').slice(0, 100), url: tab.url }))
+    tab_id: tab.id, window_id: tab.windowId, active: Boolean(tab.active), title: (tab.title || '').slice(0, 100), url: tab.url }))
     .filter(tab => tab.provider && Number.isInteger(tab.tab_id));
 }
+// Popup-only tab/window operations. Web pages can never invoke them.
+async function requireExtensionUI(sender) {
+  if (sender.tab || !sender.url?.startsWith(chrome.runtime.getURL('popup.html'))) {
+    throw Error('Sessions controls are available only from the extension popup.');
+  }
+}
+async function focusBrowserSession(tabId) {
+  if (!Number.isInteger(tabId)) throw Error('Invalid conversation tab.');
+  const tab = await chrome.tabs.get(tabId);
+  if (!sessionFromUrl(tab.url || '')) throw Error('Tab is no longer an open conversation.');
+  await chrome.tabs.update(tabId, {active: true});
+  await chrome.windows.update(tab.windowId, {focused: true});
+  return {tab_id:tabId,window_id:tab.windowId};
+}
+function screenBounds(screen) {
+  const width = Number(screen?.width),height = Number(screen?.height);
+  const left = Number(screen?.left),top=Number(screen?.top);
+  if (![width,height,left,top].every(Number.isFinite) || width < 640 || height < 400 || width > 20000 || height > 20000 ||
+      Math.abs(left) > 20000 || Math.abs(top) > 20000) throw Error('Invalid available display geometry.');
+  return {width:Math.floor(width),height:Math.floor(height),left:Math.floor(left),top:Math.floor(top)};
+}
+async function compactBrowserSessions(screen) {
+  const tabs = await listBrowserSessions();
+  if (!tabs.length) throw Error('No saved ChatGPT or Claude sessions are open.');
+  // Never duplicate provider tabs or wipe drafts: move each existing tab into
+  // its own small window. A non-fitting screen fails before ANY tabs are moved.
+  const rects = compactGrid(tabs.length,screenBounds(screen));
+  const windows = [];
+  for (let i = 0; i < tabs.length; i++) {
+    const created = await chrome.windows.create({tabId:tabs[i].tab_id, type:'popup',
+      focused:false, ...rects[i]});
+    windows.push(created.id);
+  }
+  if (windows.length) await chrome.windows.update(windows[0],{focused:true});
+  return {count:windows.length,window_ids:windows};
+}
+async function openDashboardCompanion(screen) {
+  const b = screenBounds(screen);
+  if (b.width < 1060) throw Error('At least 1060px of screen width is required for side-by-side sessions and dashboard.');
+  const sessionWidth = Math.max(390,Math.min(470,Math.floor(b.width*0.34)));
+  const dashWidth = b.width-sessionWidth;
+  const popupUrl = chrome.runtime.getURL('popup.html?view=sessions');
+  const windows = await chrome.windows.getAll({populate:true});
+  let sessionWindow = windows.find(w=>w.tabs?.some(t=>t.url?.startsWith(popupUrl)));
+  if (sessionWindow) {
+    await chrome.windows.update(sessionWindow.id,{state:'normal',left:b.left,top:b.top,width:sessionWidth,height:b.height,focused:false});
+  } else {
+    sessionWindow = await chrome.windows.create({url:popupUrl,type:'popup',
+      left:b.left,top:b.top,width:sessionWidth,height:b.height,focused:false});
+  }
+  const dashboardUrl = configuredEndpoint()+'/';
+  let dashboard = windows.find(w=>w.type==='popup' && w.tabs?.some(t=>t.url===dashboardUrl));
+  if (dashboard) {
+    await chrome.windows.update(dashboard.id,{state:'normal',left:b.left+sessionWidth,top:b.top,
+      width:dashWidth,height:b.height,focused:true});
+  } else {
+    dashboard = await chrome.windows.create({url:dashboardUrl,type:'popup',
+      left:b.left+sessionWidth,top:b.top,width:dashWidth,height:b.height,focused:true});
+  }
+  return {sessions_window_id:sessionWindow.id,dashboard_window_id:dashboard.id};
+}
+
 function validSymbolIdentity(provider,id){return ['chatgpt','claude'].includes(provider)&&typeof id==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(id);}
 const deliveriesInFlight = new Set();
 async function deliverToConversation(payload) {
+  if (!(await settings()).enabled) throw Error('prompt-helper is turned off.');
   const { delivery_id, tab_id, diff_tokens, original_tokens, estimator, repo_path, compressed_diff, symbol_registry, compression_enabled } = payload || {};
   if (typeof delivery_id !== 'string' || !/^[a-f0-9]{32}$/.test(delivery_id)) throw Error('Invalid prepared delivery ID.');
   if (!Number.isInteger(tab_id) || !Number.isSafeInteger(diff_tokens) || diff_tokens < 0 ||
@@ -261,6 +338,7 @@ async function sendPatchError(state,id,reason,attempt){
   } catch(error){return {retried:false,extra:` | Error report or response watcher could not start: ${String(error).slice(0,400)}`};}
 }
 async function responseCompleted(data,sender){
+  if (!(await settings()).enabled) return {status:'disabled'};
   const id=data?.delivery_id;
   if(typeof id!=='string'|| !/^[a-f0-9]{32}$/.test(id))throw Error('Invalid delivery ID.');
   const key=`patch-delivery:${id}`;
@@ -366,3 +444,39 @@ async function downloadPatch(candidate,tab_id,id){
   if(item?.state!=='complete'||!/\.(?:zip|patch|diff)$/i.test(item.filename||''))throw Error('Downloaded attachment is not a patch or ZIP');
   return item.filename;
 }
+
+// Rebuilds update a stable folder; watch the build marker to reload in Chrome.
+watchBuilds();
+
+// Static manifest scripts attach automatically on new loads, but Chrome does
+// not inject them retroactively into pages that were open during installation.
+const activation = new Map();
+const CHAT_FILES = ['content.js','delivery-content.js','response-monitor.js'];
+async function activateExistingTab(tab) {
+  if (!tab || !Number.isInteger(tab.id) || !sessionFromUrl(tab.url || '')) return false;
+  if (activation.has(tab.id)) return activation.get(tab.id);
+  const operation = (async () => {
+    try {
+      const ready = await chrome.tabs.sendMessage(tab.id,{type:'prompt-helper-content-ready'}).catch(()=>null);
+      if (ready?.ready) return true;
+      await chrome.scripting.executeScript({target:{tabId:tab.id},files:CHAT_FILES});
+      return true;
+    } catch (error) {
+      console.debug('prompt-helper: cannot activate tab', tab.id, error);
+      return false;
+    } finally { activation.delete(tab.id); }
+  })();
+  activation.set(tab.id,operation);
+  return operation;
+}
+async function activateOpenConversations() {
+  const tabs = await chrome.tabs.query({});
+  await Promise.allSettled(tabs.map(tab=>activateExistingTab(tab)));
+}
+chrome.runtime.onInstalled.addListener(()=>void activateOpenConversations());
+chrome.runtime.onStartup.addListener(()=>void activateOpenConversations());
+// The action popup can request activation on demand if Chrome missed startup.
+chrome.tabs.onUpdated.addListener((tabId,changed,tab)=>{
+  if (changed.status==='complete' && sessionFromUrl(tab.url || '')) void activateExistingTab(tab);
+});
+void activateOpenConversations();

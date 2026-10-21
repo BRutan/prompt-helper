@@ -2,6 +2,8 @@
 // Insert a staged diff into the CURRENT chat editor and click its send control.
 // Confirm only when the newly submitted user message is visible in the DOM.
 (() => {
+  if (globalThis.__promptHelperDeliveryActive) return;
+  globalThis.__promptHelperDeliveryActive = true;
   const sources = {
     chatgpt: ['#prompt-textarea', 'textarea[data-testid="prompt-textarea"]', '[contenteditable="true"][data-testid="prompt-textarea"]'],
     claude: ['[contenteditable="true"].ProseMirror', '[data-testid="chat-input"] [contenteditable="true"]', 'fieldset [contenteditable="true"]'],

@@ -1,4 +1,9 @@
 name: prompt-helper
+
+# Shared by every service. The Chrome build also reads IS_LOCAL on the host.
+x-common-env: &common-env
+  IS_LOCAL: ${IS_LOCAL:-1}
+
 services:
   frontend:
     container_name: prompt-helper-frontend
@@ -7,6 +12,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "127.0.0.1:${PROMPT_HELPER_PORT:-5173}:80"
+    environment:
+      <<: *common-env
     depends_on:
       backend:
         condition: service_healthy
@@ -21,6 +28,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     environment:
+      <<: *common-env
       DB_HOST: db
       DB_NAME: prompt-helper
       DB_USER: prompt-helper
@@ -46,6 +54,7 @@ services:
       context: ./db
       dockerfile: Dockerfile
     environment:
+      <<: *common-env
       POSTGRES_DB: prompt-helper
       POSTGRES_USER: prompt-helper
       POSTGRES_PASSWORD: ${PROMPT_HELPER_DB_PASSWORD:-prompt-helper_dev_only}

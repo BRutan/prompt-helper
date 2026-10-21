@@ -1,3 +1,4 @@
+// Path: frontend/src/api.js
 /**
  * Fetch JSON from the prompt-helper API without losing the real HTTP error.
  * In particular, Safari reports "The string did not match the expected pattern"

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Build an installable unpacked MV3 extension and its ZIP distribution."""
+"""
+Path: plugins/build_chrome.py
+Build an installable unpacked MV3 extension and its ZIP distribution."""
 from __future__ import annotations
 
 import argparse

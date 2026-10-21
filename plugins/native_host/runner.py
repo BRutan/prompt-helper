@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Local Chrome Native Messaging host: validate and apply a downloaded Git patch.
+"""
+Path: plugins/native_host/runner.py
+Local Chrome Native Messaging host: validate and apply a downloaded Git patch.
 
 No shell commands supplied by chatbot text are executed. Only git apply is used.
 The browser must download the patch first; this host does not fetch URLs.

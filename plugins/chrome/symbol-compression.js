@@ -1,4 +1,4 @@
-// Path: frontend/src/symbol-compression.js
+// Path: plugins/chrome/symbol-compression.js
 // Git-patch transport aliases. This is intentionally a conservative lexical
 // transform, NOT a source rewrite or a substitute for AST/LSP symbol resolution.
 // The registry is scoped to a browser conversation and then to a file path.

@@ -2,17 +2,23 @@
 // Only active chat composers are processed. Clipboard content is never sent
 // anywhere except the user's loopback prompt-helper backend.
 (() => {
+  if (globalThis.__promptHelperContentActive) return;
+  globalThis.__promptHelperContentActive = true;
+  chrome.runtime.onMessage.addListener((msg,_sender,reply)=>{ if(msg?.type==='prompt-helper-content-ready') reply({ready:true}); });
   const FRAME = /^={8,}\r?\nSOURCE_DIR:[ \t]*\/[^\r\n]+\r?\nFILE:[ \t]*[^\r\n]+\r?\n={8,}(?:\r?\n|$)/m;
   const HEADER = /^(?:\/\/|#|--|<!--|\/\*|)?[ \t]*Path:[ \t]*(?:\/|[\w.-]+\/)[^\r\n]+/m;
   let processing = false;
+  let enabled = true;
   let minChars = 1000;
   let replaceOnPaste = true;
-  chrome.storage.local.get({ minChars: 1000, replaceOnPaste: true }, settings => {
+  chrome.storage.local.get({ enabled: true, minChars: 1000, replaceOnPaste: true }, settings => {
+    enabled = settings.enabled !== false;
     minChars = Number(settings.minChars) || 1000;
     replaceOnPaste = settings.replaceOnPaste !== false;
   });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
+    if (changes.enabled) enabled = changes.enabled.newValue !== false;
     if (changes.minChars) minChars = Number(changes.minChars.newValue) || 1000;
     if (changes.replaceOnPaste) replaceOnPaste = changes.replaceOnPaste.newValue !== false;
   });
@@ -63,7 +69,7 @@
     // No timers required for correctness; later actions replace this message.
   }
   document.addEventListener('paste', async event => {
-    if (processing || event.defaultPrevented) return;
+    if (!enabled || processing || event.defaultPrevented) return;
     const editor = editorFrom(event.target);
     if (!editor) return;
     const original = event.clipboardData?.getData('text/plain') || '';
@@ -80,8 +86,13 @@
       // If the user moved away before processing finished, restore the source
       // into the original editor rather than injecting a diff into another chat.
       const samePage = location.pathname.includes(result.session.conversation_id);
+      if (!enabled) {
+        if (replacing && editor.isConnected) insertText(editor, original);
+        toast('prompt-helper is off. Original paste restored.');
+        return;
+      }
       if (!replacing || !samePage || !editor.isConnected) {
-        toast('Session diff saved. Open the extension popup to copy it.');
+        toast('Session changes processed in the background.');
         return;
       }
       if (!insertText(editor, result.replacement_text)) throw Error('Editor insertion was rejected.');

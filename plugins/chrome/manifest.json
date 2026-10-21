@@ -6,7 +6,9 @@
   "permissions": [
     "activeTab",
     "tabs",
+    "scripting",
     "storage",
+    "alarms",
     "clipboardWrite",
     "downloads",
     "nativeMessaging"
@@ -51,6 +53,6 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "prompt-helper session diff"
+    "default_title": "prompt-helper"
   }
 }
