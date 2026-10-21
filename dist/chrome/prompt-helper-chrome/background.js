@@ -1,7 +1,8 @@
 // Path: plugins/chrome/background.js
 import { sessionFromUrl, looksLikeSource, localBaseUrl } from './session.js';
+import { expandGitDiff, inverseForNative, normalizeGitDiffPaths } from './symbol-compression.js';
 
-const DEFAULTS = { endpoint: 'http://127.0.0.1:5173', minChars: 1000, replaceOnPaste: true };
+const DEFAULTS = { endpoint: 'http://127.0.0.1:5173', minChars: 1000, replaceOnPaste: true, symbolCompression: false };
 const API_PATH = '/api/v1/chat-sessions/diff';
 const inFlight = new Map();
 const recent = new Map();
@@ -93,13 +94,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'process-source': return processPaste(message, sender);
       case 'list-sessions':
       case 'open-provider':
-      case 'deliver-session': return dashboardRequest(message, sender);
+      case 'deliver-session':
+      case 'symbol-settings':
+      case 'set-symbol-compression':
+      case 'commit-symbol-registry': return dashboardRequest(message, sender);
+      case 'assistant-response-complete': return responseCompleted(message.payload, sender);
+      case 'assistant-response-timeout': return responseTimedOut(message.delivery_id, sender);
       case 'get-status': return getStatus(sender);
       case 'set-options': {
         const endpoint = localBaseUrl(message.endpoint);
         const minChars = Number(message.minChars);
         if (!Number.isInteger(minChars) || minChars < 100 || minChars > 1000000) throw Error('minChars must be 100..1000000');
-        const options = { endpoint, minChars, replaceOnPaste: Boolean(message.replaceOnPaste) };
+        const options = { endpoint, minChars, replaceOnPaste: Boolean(message.replaceOnPaste), symbolCompression: Boolean(message.symbolCompression) };
         await chrome.storage.local.set(options);
         return options;
       }
@@ -127,13 +133,15 @@ async function listBrowserSessions() {
     tab_id: tab.id, title: (tab.title || '').slice(0, 100), url: tab.url }))
     .filter(tab => tab.provider && Number.isInteger(tab.tab_id));
 }
+function validSymbolIdentity(provider,id){return ['chatgpt','claude'].includes(provider)&&typeof id==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(id);}
 const deliveriesInFlight = new Set();
 async function deliverToConversation(payload) {
-  const { delivery_id, tab_id, diff_tokens, original_tokens, estimator } = payload || {};
+  const { delivery_id, tab_id, diff_tokens, original_tokens, estimator, repo_path, compressed_diff, symbol_registry, compression_enabled } = payload || {};
   if (typeof delivery_id !== 'string' || !/^[a-f0-9]{32}$/.test(delivery_id)) throw Error('Invalid prepared delivery ID.');
   if (!Number.isInteger(tab_id) || !Number.isSafeInteger(diff_tokens) || diff_tokens < 0 ||
       !Number.isSafeInteger(original_tokens) || original_tokens < 0 ||
       typeof estimator !== 'string' || estimator.length > 120) throw Error('Estimate must be calculated before dispatch.');
+  if (typeof repo_path !== 'string' || !repo_path.startsWith('/') || repo_path.length > 4096 || repo_path.includes('\0')) throw Error('An absolute local target Git repository path is required.');
   if (deliveriesInFlight.has(delivery_id)) throw Error('This delivery is already in progress.');
   deliveriesInFlight.add(delivery_id);
   try {
@@ -148,13 +156,38 @@ async function deliverToConversation(payload) {
     if (identity?.provider !== staged.provider || identity?.conversation_id !== staged.conversation_id) {
       throw Error('The selected browser tab no longer matches the prepared conversation.');
     }
+    if (!staged.user_prompt?.trim()) throw Error('A required user instruction must be saved with the delivery.');
+    const config=await settings();
+    if(Boolean(compression_enabled)!==Boolean(config.symbolCompression))throw Error('Compression setting changed since preview. Prepare again.');
+    const registryKey=`symbol-registry:${staged.provider}:${staged.conversation_id}`;
+    let registry={};
+    let diff=staged.llm_diff;
+    if(config.symbolCompression){
+      if(typeof staged.git_diff!=='string'||!staged.git_diff.trim())throw Error('Delivery has no persisted Git diff; prepare again.');
+      if(typeof compressed_diff!=='string'||!symbol_registry||typeof symbol_registry!=='object')throw Error('Symbol-compressed Git diff and mapping required.');
+      const stored=(await chrome.storage.local.get(registryKey))[registryKey]||{};
+      // Persistent aliases can never be silently remapped between deliveries.
+      for(const [path, names] of Object.entries(stored))for(const [word,alias] of Object.entries(names||{})){
+        if(symbol_registry[path]?.[word]!==alias)throw Error('Symbol mapping changed since last successful send. Prepare again.');
+      }
+      const original=normalizeGitDiffPaths(staged.git_diff,staged.files,repo_path);
+      if(expandGitDiff(compressed_diff,symbol_registry)!==original)throw Error('Compressed Git diff does not decode to the server-stored original.');
+      registry=symbol_registry;
+      diff=compressed_diff;
+    }
+    const text = `USER REQUEST\n${staged.user_prompt}\n\n${config.symbolCompression?'SYMBOL-COMPRESSED GIT DIFF':'SOURCE CHANGES'}\n${diff}\n\n${config.symbolCompression?'The diff uses temporary local aliases for eligible private symbols. Preserve aliases when editing; the local patch runner restores their original names before git apply. Never rename external APIs, exports or public symbols.\n\n':''}Return an applicable Git patch as one downloadable .patch or .zip file, and give the git apply command. Do not require any other shell commands to apply it.`;
+    // Persist the explicitly selected repo and identity, never take it from the chatbot reply.
+    await chrome.storage.local.set({ [`pending-symbols:${delivery_id}`]:config.symbolCompression?registry:null, [`patch-delivery:${delivery_id}`]: {repo_path,tab_id,
+      provider:staged.provider,conversation_id:staged.conversation_id, symbol_registry: config.symbolCompression?inverseForNative(registry):null} });
     const response = await chrome.tabs.sendMessage(tab_id, { type: 'insert-and-send-diff',
-      payload: { provider: staged.provider, conversation_id: staged.conversation_id, text: staged.llm_diff } });
+      payload: { provider: staged.provider, conversation_id: staged.conversation_id, delivery_id, text } });
     if (!response?.ok) throw Error(response?.error || 'Browser rejected the diff.');
     if (!response.result?.confirmed) return { status:'unconfirmed', reason:response.result?.reason || 'Submission not verified.' };
     const ack = await api('/api/v1/chat-sessions/delivery', { method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({delivery_id,diff_tokens,original_tokens,estimator}) });
+    if(config.symbolCompression)await chrome.storage.local.set({[registryKey]:registry});
+    await chrome.storage.local.remove(`pending-symbols:${delivery_id}`);
     return { ...ack, provider:staged.provider, conversation_id:staged.conversation_id };
   } finally { deliveriesInFlight.delete(delivery_id); }
 }
@@ -162,6 +195,28 @@ async function deliverToConversation(payload) {
 async function dashboardRequest(message, sender) {
   await fromDashboard(sender);
   if (message.type === 'list-sessions') return { sessions: await listBrowserSessions() };
+  if (message.type === 'symbol-settings') {
+    const provider=message.payload?.provider, conversation_id=message.payload?.conversation_id;
+    if(!validSymbolIdentity(provider,conversation_id))throw Error('Select a saved conversation.');
+    const key=`symbol-registry:${provider}:${conversation_id}`;
+    return {enabled:(await settings()).symbolCompression,registry:(await chrome.storage.local.get(key))[key]||{}};
+  }
+  if (message.type === 'set-symbol-compression') {
+    const enabled=message.payload?.enabled;
+    if(typeof enabled!=='boolean')throw Error('Invalid compression toggle');
+    await chrome.storage.local.set({symbolCompression:enabled});
+    return {enabled};
+  }
+  if (message.type === 'commit-symbol-registry') {
+    const id=message.payload?.delivery_id;
+    if(typeof id!=='string'||!/^[a-f0-9]{32}$/.test(id))throw Error('Invalid delivery');
+    const record=await api('/api/v1/chat-sessions/delivery?'+new URLSearchParams({delivery_id:id}));
+    if(record.status!=='sent')throw Error('Delivery is not confirmed as sent');
+    const mapping=(await chrome.storage.local.get(`pending-symbols:${id}`))[`pending-symbols:${id}`];
+    if(mapping){await chrome.storage.local.set({[`symbol-registry:${record.provider}:${record.conversation_id}`]:mapping});
+      await chrome.storage.local.remove(`pending-symbols:${id}`);}
+    return {committed:!!mapping};
+  }
   if (message.type === 'open-provider') {
     const provider = message.payload?.provider;
     if (!['chatgpt','claude'].includes(provider)) throw Error('Unknown provider.');
@@ -169,4 +224,145 @@ async function dashboardRequest(message, sender) {
     return { tab_id:tab.id, provider, status:'opened', note:'Start a conversation, then refresh sessions to discover its saved URL.' };
   }
   return deliverToConversation(message.payload);
+}
+
+// A completion observation is accepted only from the same conversation tab
+// that sent the original delivery; downloading and git apply are performed
+// once for that delivery even if the page watcher emits a duplicate event.
+const completedInFlight=new Set();
+async function recordPatchEvent(event){
+  return api('/api/v1/chat-sessions/patch-event',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(event)});
+}
+async function responseTimedOut(id,sender){
+  const state=(await chrome.storage.local.get(`patch-delivery:${id}`))[`patch-delivery:${id}`];
+  if(!state || sender.tab?.id!==state.tab_id)return {ignored:true};
+  return recordPatchEvent({delivery_id:id,status:'timeout',details:'No completed assistant response detected within 30 minutes.'});
+}
+// Limit automatic corrective follow-ups to two to prevent a runaway chat loop.
+const MAX_PATCH_ATTEMPTS=3;
+async function sendPatchError(state,id,reason,attempt){
+  if(attempt>=MAX_PATCH_ATTEMPTS)return {retried:false,extra:' | Automatic retry limit reached (3 attempts).'};
+  const text='PATCH APPLICATION FAILED\n'+
+    `No patch has been applied to the selected Git repository (${state.repo_path}).\n`+
+    `Delivery: ${id}\nError: ${reason.slice(0,3500)}\n`+
+    'Please regenerate a corrected, downloadable .patch or .zip containing exactly one Git patch against the source files already supplied. Do not assume anything was applied.';
+  try {
+    const reported=await chrome.tabs.sendMessage(state.tab_id,{type:'report-patch-error',
+      payload:{provider:state.provider,conversation_id:state.conversation_id,text}});
+    const report=reported?.result;
+    if(!report?.confirmed)return {retried:false,extra:' | Automatic chatbot error report not confirmed; report manually.'};
+    const watcher=await chrome.tabs.sendMessage(state.tab_id,{type:'monitor-assistant',payload:{
+      provider:state.provider,conversation_id:state.conversation_id,delivery_id:id,
+      started_at:report.submitted_at,before_count:report.before_count,before_text:report.before_text
+    }});
+    if(!watcher?.ok)return {retried:false,extra:' | Correction was requested, but the response monitor could not restart.'};
+    return {retried:true,extra:' | Correction requested; monitoring next chatbot response.'};
+  } catch(error){return {retried:false,extra:` | Error report or response watcher could not start: ${String(error).slice(0,400)}`};}
+}
+async function responseCompleted(data,sender){
+  const id=data?.delivery_id;
+  if(typeof id!=='string'|| !/^[a-f0-9]{32}$/.test(id))throw Error('Invalid delivery ID.');
+  const key=`patch-delivery:${id}`;
+  const state=(await chrome.storage.local.get(key))[key];
+  if(!state || sender.tab?.id!==state.tab_id ||
+     sessionFromUrl(sender.tab.url||'')?.conversation_id!==state.conversation_id)throw Error('Response is not from the expected conversation tab.');
+  if(!Number.isSafeInteger(data.response_ms)||data.response_ms<0||data.response_ms>86400000)throw Error('Invalid response time.');
+  if(completedInFlight.has(id))return {status:'in-progress'};
+  const existing=(await chrome.storage.local.get(`patch-finished:${id}`))[`patch-finished:${id}`];
+  if(existing)return {status:'already-processed'};
+  completedInFlight.add(id);
+  const attemptKey=`patch-attempts:${id}`;
+  const attempt=Number((await chrome.storage.local.get(attemptKey))[attemptKey]||0)+1;
+  await chrome.storage.local.set({[attemptKey]:attempt});
+  let retried=false;
+  const result={delivery_id:id,response_ms:data.response_ms, status:'no_patch', details:''};
+  try{
+    const files=Array.isArray(data.files)?data.files:[];
+    if(!files.length){
+      result.details='Assistant response completed; no downloadable .patch, .diff, or .zip link was detected.';
+      const retry=await sendPatchError(state,id,result.details,attempt);
+      retried=retry.retried;result.details+=retry.extra;
+      await recordPatchEvent(result);
+      return result;
+    }
+    await recordPatchEvent({...result,status:'observed',details:`Assistant finished; ${files.length} patch link(s) detected.`});
+    const candidate=files.find(f=>/\.(?:zip|patch|diff)(?:$|[?#])/i.test(f.url||''))||files[0];
+    let filename='';
+    try{
+      filename=await downloadPatch(candidate,state.tab_id,id);
+      let applied;
+      try {
+        applied=await chrome.runtime.sendNativeMessage('com.prompt_helper.patch_runner',
+          {action:'apply_patch',repo_path:state.repo_path,download_path:filename, symbol_mapping:state.symbol_registry||null});
+      }catch(error){throw Error('Native Git helper unavailable or failed: '+String(error));}
+      if(applied?.ok){
+        result.status='applied';result.details=`Applied ${applied.filename} to ${state.repo_path}`;
+      }else{
+        result.status='apply_failed';result.details=`${applied?.stage||'native host'}: ${applied?.output||applied?.error||'unknown error'}`;
+      }
+    }catch(error){
+      result.status=filename?'apply_failed':'download_failed';result.details=String(error.message||error);
+    }
+    await recordPatchEvent({...result,filename:filename.split('/').at(-1)||''});
+    if(result.status!=='applied'){
+      const retry=await sendPatchError(state,id,result.details,attempt);
+      retried=retry.retried;
+      result.details+=retry.extra;
+      await recordPatchEvent({...result,filename:filename.split('/').at(-1)||''});
+    }
+    return result;
+  } finally {
+    if(!retried)await chrome.storage.local.set({[`patch-finished:${id}`]:true});
+    completedInFlight.delete(id);
+  }
+}
+function waitDownload(id,timeout=120000){
+  return new Promise((resolve,reject)=>{
+    let timer;
+    function detach(){clearTimeout(timer);chrome.downloads.onChanged.removeListener(listener)}
+    function listener(delta){
+      if(delta.id!==id)return;
+      if(delta.state?.current==='complete'){detach();resolve(id)}
+      else if(delta.state?.current==='interrupted'){detach();reject(Error('Browser download was interrupted'))}
+    }
+    chrome.downloads.onChanged.addListener(listener);
+    chrome.downloads.search({id}).then(items=>{
+      if(items[0]?.state==='complete'){detach();resolve(id)}
+    }).catch(()=>{});
+    timer=setTimeout(()=>{detach();reject(Error('Timed out downloading the generated patch'))},timeout);
+  });
+}
+async function downloadPatch(candidate,tab_id,id){
+  const href=candidate?.url;
+  if(typeof href!=='string'||!(/^(https:\/\/|sandbox:)/.test(href)))throw Error('Unsupported patch link.');
+  let downloadId;
+  if(href.startsWith('https://')){
+    try {
+      downloadId=await chrome.downloads.download({url:href,conflictAction:'uniquify',saveAs:false});
+    }catch{} // Authenticated/sandbox links may need an in-page click.
+  }
+  if(!Number.isInteger(downloadId)){
+    // Correlate the next *matching filename* that was created by clicking the
+    // assistant's attachment; never apply unrelated background downloads.
+    const created=new Promise((resolve,reject)=>{
+      let timer;
+      const handler=item=>{
+        if(item.tabId!==tab_id)return;
+        if(!/\.(?:zip|diff|patch)(?:$|[?#])/i.test(item.filename||item.url||''))return;
+        cleanup();resolve(item.id);
+      };
+      function cleanup(){clearTimeout(timer);chrome.downloads.onCreated.removeListener(handler)}
+      chrome.downloads.onCreated.addListener(handler);
+      timer=setTimeout(()=>{cleanup();reject(Error('No matching patch download started from the assistant attachment'))},20000);
+    });
+    const clicked=await chrome.tabs.sendMessage(tab_id,{type:'click-assistant-patch',url:href});
+    if(!clicked?.ok)throw Error(clicked?.error||'Could not click the assistant attachment');
+    downloadId=await created;
+  }
+  await waitDownload(downloadId);
+  const items=await chrome.downloads.search({id:downloadId});
+  const item=items[0];
+  if(item?.state!=='complete'||!/\.(?:zip|patch|diff)$/i.test(item.filename||''))throw Error('Downloaded attachment is not a patch or ZIP');
+  return item.filename;
 }

@@ -23,6 +23,7 @@ type prepareDeliveryRequest struct {
 	Provider       string `json:"provider"`
 	ConversationID string `json:"conversation_id"`
 	Filename       string `json:"filename"`
+	UserPrompt     string `json:"user_prompt"`
 }
 type deliveryConfirmRequest struct {
 	DeliveryID     string `json:"delivery_id"`
@@ -36,11 +37,17 @@ type deliveryRecord struct {
 	ConversationID string            `json:"conversation_id"`
 	Status         string            `json:"status"`
 	LLMDiff        string            `json:"llm_diff"`
+	GitDiff        string            `json:"git_diff"`
 	Files          []batchFileStatus `json:"files"`
 	SourceSHA      string            `json:"source_sha256"`
 	DiffTokens     *int64            `json:"diff_tokens,omitempty"`
 	OriginalTokens *int64            `json:"original_tokens,omitempty"`
 	Estimator      *string           `json:"estimator,omitempty"`
+	UserPrompt     string            `json:"user_prompt"`
+	ResponseMS     *int64            `json:"response_ms,omitempty"`
+	PatchStatus    string            `json:"patch_status"`
+	PatchFilename  *string           `json:"patch_filename,omitempty"`
+	PatchDetails   *string           `json:"patch_details,omitempty"`
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
@@ -96,6 +103,10 @@ func (a *app) prepareSessionDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	var req prepareDeliveryRequest
 	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if len(strings.TrimSpace(req.UserPrompt)) == 0 || len(req.UserPrompt) > 65536 {
+		sendError(w, 422, "a nonempty user_prompt of at most 65536 characters is required")
 		return
 	}
 	if !validChatIdentity(req.Provider, req.ConversationID) {
@@ -192,7 +203,7 @@ func (a *app) prepareSessionDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	baseJSON, _ := json.Marshal(baselines)
 	manifestJSON, _ := json.Marshal(preview.Files)
-	_, err = tx.Exec(ctx, `INSERT INTO chat_session_deliveries(id,session_id,upload_filename,source_sha256,baselines,prepared_diff,manifest) VALUES ($1,$2,$3,$4,$5,$6,$7)`, id, sid, req.Filename, sourceHash(content), baseJSON, preview.LLMDiff, manifestJSON)
+	_, err = tx.Exec(ctx, `INSERT INTO chat_session_deliveries(id,session_id,upload_filename,source_sha256,baselines,prepared_diff,prepared_git_diff,manifest,user_prompt) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, id, sid, req.Filename, sourceHash(content), baseJSON, preview.LLMDiff, preview.UnifiedDiff, manifestJSON, req.UserPrompt)
 	if err != nil {
 		log.Printf("prepare delivery: %v", err)
 		sendError(w, 500, "cannot stage delivery")
@@ -202,7 +213,7 @@ func (a *app) prepareSessionDelivery(w http.ResponseWriter, r *http.Request) {
 		sendError(w, 500, "cannot commit delivery")
 		return
 	}
-	jsonResponse(w, 200, map[string]any{"delivery_id": id, "session_id": sid, "provider": req.Provider, "conversation_id": req.ConversationID, "source_sha256": sourceHash(content), "status": "prepared", "preview": preview, "upload_bytes": len(content)})
+	jsonResponse(w, 200, map[string]any{"delivery_id": id, "session_id": sid, "provider": req.Provider, "conversation_id": req.ConversationID, "source_sha256": sourceHash(content), "status": "prepared", "preview": preview, "user_prompt": req.UserPrompt, "upload_bytes": len(content)})
 }
 
 // GET loads the SERVER-STORED diff so browser messages cannot substitute a
@@ -213,7 +224,7 @@ func (a *app) sessionDelivery(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("delivery_id")
 		var rec deliveryRecord
 		var manifest []byte
-		err := a.db.QueryRow(r.Context(), `SELECT d.id,s.provider,s.conversation_id,d.status,d.prepared_diff,d.manifest,d.source_sha256,d.diff_tokens,d.original_tokens,d.estimator FROM chat_session_deliveries d JOIN chat_sessions s ON s.id=d.session_id WHERE d.id=$1`, id).Scan(&rec.ID, &rec.Provider, &rec.ConversationID, &rec.Status, &rec.LLMDiff, &manifest, &rec.SourceSHA, &rec.DiffTokens, &rec.OriginalTokens, &rec.Estimator)
+		err := a.db.QueryRow(r.Context(), `SELECT d.id,s.provider,s.conversation_id,d.status,d.prepared_diff,d.prepared_git_diff,d.manifest,d.source_sha256,d.diff_tokens,d.original_tokens,d.estimator,d.user_prompt,d.response_ms,d.patch_status,d.patch_filename,d.patch_details FROM chat_session_deliveries d JOIN chat_sessions s ON s.id=d.session_id WHERE d.id=$1`, id).Scan(&rec.ID, &rec.Provider, &rec.ConversationID, &rec.Status, &rec.LLMDiff, &rec.GitDiff, &manifest, &rec.SourceSHA, &rec.DiffTokens, &rec.OriginalTokens, &rec.Estimator, &rec.UserPrompt, &rec.ResponseMS, &rec.PatchStatus, &rec.PatchFilename, &rec.PatchDetails)
 		if errors.Is(err, pgx.ErrNoRows) {
 			sendError(w, 404, "delivery not found")
 			return
@@ -388,7 +399,7 @@ func (a *app) sentSessionFiles(w http.ResponseWriter, r *http.Request) {
 		sendError(w, 422, "invalid session")
 		return
 	}
-	rows, err := a.db.Query(r.Context(), `SELECT f.path,f.sha256,f.version,d.id,d.diff_tokens,d.original_tokens,d.estimator,f.sent_at FROM chat_session_sent_files f JOIN chat_session_deliveries d ON d.id=f.delivery_id JOIN chat_sessions s ON s.id=f.session_id WHERE s.provider=$1 AND s.conversation_id=$2 ORDER BY f.sent_at DESC,f.path LIMIT 500`, p, c)
+	rows, err := a.db.Query(r.Context(), `SELECT f.path,f.sha256,f.version,d.id,d.diff_tokens,d.original_tokens,d.estimator,f.sent_at,d.response_ms,d.patch_status,d.patch_details FROM chat_session_sent_files f JOIN chat_session_deliveries d ON d.id=f.delivery_id JOIN chat_sessions s ON s.id=f.session_id WHERE s.provider=$1 AND s.conversation_id=$2 ORDER BY f.sent_at DESC,f.path LIMIT 500`, p, c)
 	if err != nil {
 		sendError(w, 500, "cannot list sent files")
 		return
@@ -403,11 +414,14 @@ func (a *app) sentSessionFiles(w http.ResponseWriter, r *http.Request) {
 		OriginalTokens *int64    `json:"original_tokens"`
 		Estimator      *string   `json:"estimator"`
 		SentAt         time.Time `json:"sent_at"`
+		ResponseMS     *int64    `json:"response_ms,omitempty"`
+		PatchStatus    string    `json:"patch_status"`
+		PatchDetails   *string   `json:"patch_details,omitempty"`
 	}
 	files := make([]sent, 0)
 	for rows.Next() {
 		var s sent
-		if err = rows.Scan(&s.Path, &s.SHA, &s.Version, &s.DeliveryID, &s.DiffTokens, &s.OriginalTokens, &s.Estimator, &s.SentAt); err != nil {
+		if err = rows.Scan(&s.Path, &s.SHA, &s.Version, &s.DeliveryID, &s.DiffTokens, &s.OriginalTokens, &s.Estimator, &s.SentAt, &s.ResponseMS, &s.PatchStatus, &s.PatchDetails); err != nil {
 			sendError(w, 500, "cannot read sent files")
 			return
 		}
@@ -428,4 +442,60 @@ func (a *app) sentSessionFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonResponse(w, 200, map[string]any{"provider": p, "conversation_id": c, "sent_files": files,
 		"usage": map[string]any{"deliveries": deliveries, "estimated_diff_tokens": diffTokens, "estimated_original_tokens": originalTokens}})
+}
+
+// sessionPatchEvent records the observed assistant completion and each patch
+// application outcome. The response watcher is extension-driven, not an LLM API.
+func (a *app) sessionPatchEvent(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	var req struct {
+		DeliveryID string `json:"delivery_id"`
+		Status     string `json:"status"`
+		ResponseMS *int64 `json:"response_ms,omitempty"`
+		Filename   string `json:"filename,omitempty"`
+		Details    string `json:"details,omitempty"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	statuses := map[string]bool{"observed": true, "no_patch": true, "download_failed": true, "apply_failed": true, "applied": true, "manual_required": true, "timeout": true}
+	if len(req.DeliveryID) != 32 || !statuses[req.Status] || len(req.Details) > 16000 || len(req.Filename) > 500 || (req.ResponseMS != nil && (*req.ResponseMS < 0 || *req.ResponseMS > 86400000)) {
+		sendError(w, 422, "invalid patch event")
+		return
+	}
+	tx, err := a.db.Begin(r.Context())
+	if err != nil {
+		sendError(w, 503, "database unavailable")
+		return
+	}
+	defer tx.Rollback(context.Background())
+	var state string
+	err = tx.QueryRow(r.Context(), `SELECT status FROM chat_session_deliveries WHERE id=$1 FOR UPDATE`, req.DeliveryID).Scan(&state)
+	if errors.Is(err, pgx.ErrNoRows) {
+		sendError(w, 404, "delivery not found")
+		return
+	}
+	if err != nil {
+		sendError(w, 500, "could not read delivery")
+		return
+	}
+	if state != "sent" {
+		sendError(w, 409, "cannot record response before verified delivery")
+		return
+	}
+	_, err = tx.Exec(r.Context(), `UPDATE chat_session_deliveries SET patch_status=$2,patch_filename=NULLIF($3,''),patch_details=NULLIF($4,''),response_ms=COALESCE($5,response_ms),response_completed_at=CASE WHEN $5::bigint IS NOT NULL THEN now() ELSE response_completed_at END WHERE id=$1`, req.DeliveryID, req.Status, req.Filename, req.Details, req.ResponseMS)
+	if err == nil {
+		_, err = tx.Exec(r.Context(), `INSERT INTO chat_session_patch_events(delivery_id,status,details) VALUES($1,$2,$3)`, req.DeliveryID, req.Status, req.Details)
+	}
+	if err != nil {
+		sendError(w, 500, "could not save patch event")
+		return
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		sendError(w, 500, "could not commit patch event")
+		return
+	}
+	jsonResponse(w, 200, map[string]any{"delivery_id": req.DeliveryID, "patch_status": req.Status, "response_ms": req.ResponseMS})
 }

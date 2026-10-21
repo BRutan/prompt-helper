@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS chat_session_deliveries (
   source_sha256 CHAR(64) NOT NULL,
   baselines JSONB NOT NULL,
   prepared_diff TEXT NOT NULL,
+  prepared_git_diff TEXT NOT NULL DEFAULT '',
   manifest JSONB NOT NULL,
   status TEXT NOT NULL DEFAULT 'prepared' CHECK (status IN ('prepared','sent')),
   diff_tokens BIGINT,
@@ -86,3 +87,20 @@ CREATE TABLE IF NOT EXISTS chat_session_sent_files (
   PRIMARY KEY(delivery_id, path)
 );
 CREATE INDEX IF NOT EXISTS chat_session_sent_files_session_path_idx ON chat_session_sent_files(session_id, path, sent_at DESC);
+
+-- Response watcher / local patch application audit.
+ALTER TABLE chat_session_deliveries ADD COLUMN IF NOT EXISTS prepared_git_diff TEXT NOT NULL DEFAULT '';
+ALTER TABLE chat_session_deliveries ADD COLUMN IF NOT EXISTS user_prompt TEXT NOT NULL DEFAULT '';
+ALTER TABLE chat_session_deliveries ADD COLUMN IF NOT EXISTS response_ms BIGINT;
+ALTER TABLE chat_session_deliveries ADD COLUMN IF NOT EXISTS response_completed_at TIMESTAMPTZ;
+ALTER TABLE chat_session_deliveries ADD COLUMN IF NOT EXISTS patch_status TEXT NOT NULL DEFAULT 'waiting';
+ALTER TABLE chat_session_deliveries ADD COLUMN IF NOT EXISTS patch_filename TEXT;
+ALTER TABLE chat_session_deliveries ADD COLUMN IF NOT EXISTS patch_details TEXT;
+CREATE TABLE IF NOT EXISTS chat_session_patch_events (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  delivery_id TEXT NOT NULL REFERENCES chat_session_deliveries(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  details TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS chat_session_patch_events_delivery_idx ON chat_session_patch_events(delivery_id, created_at DESC);

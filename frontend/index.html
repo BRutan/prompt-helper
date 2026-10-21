@@ -28,6 +28,8 @@
             <button type="button" id="open-session" class="secondary">Open Session</button>
             <button type="button" id="refresh-sessions" class="secondary">Refresh sessions</button>
           </div>
+          <label style="display:flex;gap:9px;align-items:center;margin-top:12px"><input id="symbol-compression" type="checkbox" /> Enable code symbol compression by dialect (reversible Git diffs)</label>
+          <p id="symbol-compression-info" class="hint">Off. Only supported local identifiers are aliased, with a persistent map per conversation.</p>
           <p id="browser-status" class="hint">Looking for the Chrome extension…</p>
         </section>
         <div class="main-grid">
@@ -44,11 +46,17 @@
             <label for="source">Or paste large source here</label>
             <textarea id="source" spellcheck="false" aria-describedby="input-help" placeholder="// Path: src/components/App.tsx&#10;export function App() {&#10;  return 'hello';&#10;}"></textarea>
             <p id="input-help" class="hint">Single file: an extension-appropriate <code>Path:</code> header. Batch: separator lines enclosing <code>SOURCE_DIR:</code> and <code>FILE:</code>, followed by each file’s <code>Path:</code> header. No application-level input-size limit.</p>
+            <label for="user-prompt">Required instruction for ChatGPT / Claude</label>
+            <textarea id="user-prompt" required rows="5" placeholder="Describe the changes to make and request a downloadable Git patch…"></textarea>
+            <label for="target-repo">Target Git repository on this Mac (absolute root path)</label>
+            <input id="target-repo" required type="text" placeholder="/Users/you/Desktop/repos/project" autocomplete="off" spellcheck="false" />
+            <p class="hint">A local Chrome Native Messaging helper applies returned patches to this Git repository. Only git apply is supported; arbitrary chatbot shell commands are never executed.</p>
             <div class="actions"><button id="submit" class="primary" type="button">Prepare session diff <span>⌘ ↵</span></button><span id="input-count">0 chars</span></div>
             <p id="token-estimate" class="hint" aria-live="polite">Prepare a file to calculate estimated input tokens before sending.</p>
             <div class="actions"><button id="send-session" type="button" class="primary" disabled>Send to session</button>
               <button id="confirm-session" type="button" class="secondary" hidden>Confirm sent</button></div>
             <p id="session-message" role="status" aria-live="polite"></p>
+            <p id="response-metrics" class="hint" aria-live="polite">Response time: pending · Patch: pending</p>
             <div id="error" role="alert" class="error" hidden></div>
           </section>
           <section class="panel result-panel">
@@ -72,6 +80,8 @@
         .session-controls select,#source-file {background:#162237;color:#e7effb;border:1px solid #476080;border-radius:6px;padding:9px}
         #session-files {overflow-wrap:anywhere;max-height:340px;overflow:auto}
         #token-estimate {overflow-wrap:anywhere}
+        #target-repo {width:100%;box-sizing:border-box;background:#162237;color:#e7effb;border:1px solid #476080;border-radius:6px;padding:9px}
+        #user-prompt {min-height:110px;box-sizing:border-box;width:100%}
         #diff {overflow-wrap:anywhere}
       </style>
       <script type="module" src="/src/mounted-main.ts"></script>

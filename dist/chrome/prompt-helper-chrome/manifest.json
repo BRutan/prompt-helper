@@ -1,13 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "prompt-helper: Chat Session Diffs",
-  "version": "0.2.0",
-  "description": "Discover open ChatGPT/Claude tabs and deliver conversation-scoped source diffs.",
+  "name": "prompt-helper: Session Patches",
+  "version": "0.3.0",
+  "description": "Tracks completed AI replies and applies downloaded Git patches to selected local repositories.",
   "permissions": [
     "activeTab",
     "tabs",
     "storage",
-    "clipboardWrite"
+    "clipboardWrite",
+    "downloads",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
@@ -29,7 +31,8 @@
       ],
       "js": [
         "content.js",
-        "delivery-content.js"
+        "delivery-content.js",
+        "response-monitor.js"
       ],
       "run_at": "document_idle",
       "all_frames": false

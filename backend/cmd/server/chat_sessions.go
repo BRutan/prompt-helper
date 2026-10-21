@@ -55,14 +55,37 @@ CREATE TABLE IF NOT EXISTS chat_session_deliveries (
   source_sha256 CHAR(64) NOT NULL,
   baselines JSONB NOT NULL,
   prepared_diff TEXT NOT NULL,
+  prepared_git_diff TEXT NOT NULL DEFAULT '',
   manifest JSONB NOT NULL,
   status TEXT NOT NULL DEFAULT 'prepared' CHECK (status IN ('prepared','sent')),
   diff_tokens BIGINT,
   original_tokens BIGINT,
   estimator TEXT,
+  user_prompt TEXT NOT NULL DEFAULT '',
+  response_ms BIGINT,
+  response_completed_at TIMESTAMPTZ,
+  patch_status TEXT NOT NULL DEFAULT 'waiting',
+  patch_filename TEXT,
+  patch_details TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   sent_at TIMESTAMPTZ
 );
+-- Existing Postgres volumes already have the delivery table.
+ALTER TABLE chat_session_deliveries ADD COLUMN IF NOT EXISTS prepared_git_diff TEXT NOT NULL DEFAULT '';
+ALTER TABLE chat_session_deliveries ADD COLUMN IF NOT EXISTS user_prompt TEXT NOT NULL DEFAULT '';
+ALTER TABLE chat_session_deliveries ADD COLUMN IF NOT EXISTS response_ms BIGINT;
+ALTER TABLE chat_session_deliveries ADD COLUMN IF NOT EXISTS response_completed_at TIMESTAMPTZ;
+ALTER TABLE chat_session_deliveries ADD COLUMN IF NOT EXISTS patch_status TEXT NOT NULL DEFAULT 'waiting';
+ALTER TABLE chat_session_deliveries ADD COLUMN IF NOT EXISTS patch_filename TEXT;
+ALTER TABLE chat_session_deliveries ADD COLUMN IF NOT EXISTS patch_details TEXT;
+CREATE TABLE IF NOT EXISTS chat_session_patch_events (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  delivery_id TEXT NOT NULL REFERENCES chat_session_deliveries(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  details TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS chat_session_patch_events_delivery_idx ON chat_session_patch_events(delivery_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS chat_session_deliveries_session_idx ON chat_session_deliveries(session_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS chat_session_sent_files (
   delivery_id TEXT NOT NULL REFERENCES chat_session_deliveries(id) ON DELETE CASCADE,

@@ -15,6 +15,7 @@ async function init() {
     $('endpoint').value = config.endpoint;
     $('minimum').value = config.minChars;
     $('replace').checked = config.replaceOnPaste;
+    $('symbol-compression').checked = Boolean(config.symbolCompression);
     if (state) {
       $('status').textContent = `${state.changed} changed file(s) · ${state.additions} additions · ${state.deletions} deletions`;
       $('diff').value = state.session_diff || '';
@@ -36,7 +37,7 @@ $('copy').addEventListener('click', async () => {
 $('save').addEventListener('click', async () => {
   try {
     await call({ type: 'set-options', endpoint: $('endpoint').value,
-      minChars: Number($('minimum').value), replaceOnPaste: $('replace').checked });
+      minChars: Number($('minimum').value), replaceOnPaste: $('replace').checked, symbolCompression: $('symbol-compression').checked });
     $('status').textContent = 'Settings saved.'; $('error').textContent = '';
   } catch (error) { showError(error); }
 });

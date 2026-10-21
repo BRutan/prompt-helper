@@ -510,6 +510,7 @@ func main() {
 	mux.HandleFunc("/api/v1/chat-sessions/delivery", a.sessionDelivery)
 	mux.HandleFunc("/api/v1/chat-sessions/delivery/estimate", a.sessionDeliveryEstimate)
 	mux.HandleFunc("/api/v1/chat-sessions/sent-files", a.sentSessionFiles)
+	mux.HandleFunc("/api/v1/chat-sessions/patch-event", a.sessionPatchEvent)
 	mux.HandleFunc("/api/v1/files/batch-diff", a.batchDiff)
 	mux.HandleFunc("/api/v1/files", a.files)
 	mux.HandleFunc("/api/v1/files/history", a.history)

@@ -2,7 +2,7 @@
 // Same-origin dashboard <-> Chrome extension message bridge. Never accepts
 // requests from another frame or forwards arbitrary URL / HTTP requests.
 (() => {
-  const requestTypes = new Set(['list-sessions', 'open-provider', 'deliver-session']);
+  const requestTypes = new Set(['list-sessions', 'open-provider', 'deliver-session', 'symbol-settings', 'set-symbol-compression', 'commit-symbol-registry']);
   window.addEventListener('message', (event) => {
     if (event.source !== window || event.origin !== location.origin) return;
     const msg = event.data;
