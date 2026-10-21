@@ -1,9 +1,14 @@
 {
   "manifest_version": 3,
   "name": "prompt-helper: Chat Session Diffs",
-  "version": "0.1.0",
-  "description": "Replace recognized source dumps in ChatGPT and Claude with local, conversation-scoped diffs.",
-  "permissions": ["activeTab", "tabs", "storage", "clipboardWrite"],
+  "version": "0.2.0",
+  "description": "Discover open ChatGPT/Claude tabs and deliver conversation-scoped source diffs.",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "storage",
+    "clipboardWrite"
+  ],
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://chat.openai.com/*",
@@ -11,12 +16,38 @@
     "http://127.0.0.1/*",
     "http://localhost/*"
   ],
-  "background": {"service_worker": "background.js", "type": "module"},
-  "content_scripts": [{
-    "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://claude.ai/*"],
-    "js": ["content.js"],
-    "run_at": "document_idle",
-    "all_frames": false
-  }],
-  "action": {"default_popup": "popup.html", "default_title": "prompt-helper session diff"}
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://claude.ai/*"
+      ],
+      "js": [
+        "content.js",
+        "delivery-content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "http://127.0.0.1/*",
+        "http://localhost/*"
+      ],
+      "js": [
+        "dashboard-bridge.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "prompt-helper session diff"
+  }
 }

@@ -58,3 +58,31 @@ CREATE TABLE IF NOT EXISTS chat_session_files (
   UNIQUE(session_id, path)
 );
 CREATE INDEX IF NOT EXISTS chat_session_files_session_id_idx ON chat_session_files(session_id);
+
+-- Prepared deliveries do not change session baselines until browser delivery is confirmed.
+CREATE TABLE IF NOT EXISTS chat_session_deliveries (
+  id TEXT PRIMARY KEY,
+  session_id BIGINT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  upload_filename TEXT NOT NULL,
+  source_sha256 CHAR(64) NOT NULL,
+  baselines JSONB NOT NULL,
+  prepared_diff TEXT NOT NULL,
+  manifest JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'prepared' CHECK (status IN ('prepared','sent')),
+  diff_tokens BIGINT,
+  original_tokens BIGINT,
+  estimator TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  sent_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS chat_session_deliveries_session_idx ON chat_session_deliveries(session_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS chat_session_sent_files (
+  delivery_id TEXT NOT NULL REFERENCES chat_session_deliveries(id) ON DELETE CASCADE,
+  session_id BIGINT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  path TEXT NOT NULL,
+  sha256 CHAR(64) NOT NULL,
+  version BIGINT NOT NULL,
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(delivery_id, path)
+);
+CREATE INDEX IF NOT EXISTS chat_session_sent_files_session_path_idx ON chat_session_sent_files(session_id, path, sent_at DESC);

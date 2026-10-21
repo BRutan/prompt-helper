@@ -91,6 +91,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     switch (message?.type) {
       case 'process-source': return processPaste(message, sender);
+      case 'list-sessions':
+      case 'open-provider':
+      case 'deliver-session': return dashboardRequest(message, sender);
       case 'get-status': return getStatus(sender);
       case 'set-options': {
         const endpoint = localBaseUrl(message.endpoint);
@@ -110,3 +113,60 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   })().then(result => sendResponse({ ok: true, result }), error => sendResponse({ ok: false, error: String(error.message || error) }));
   return true;
 });
+
+// Dashboard operations are restricted to this extension's configured loopback
+// origin. Pages outside that origin cannot enumerate tabs or initiate sends.
+async function fromDashboard(sender) {
+  const origin = new URL(sender?.url || sender?.tab?.url || 'about:blank').origin;
+  const expected = localBaseUrl((await settings()).endpoint);
+  if (origin !== expected) throw Error('Dashboard origin does not match prompt-helper settings.');
+}
+async function listBrowserSessions() {
+  const tabs = await chrome.tabs.query({});
+  return tabs.map(tab => ({ ...sessionFromUrl(tab.url || ''), id: tab.id,
+    tab_id: tab.id, title: (tab.title || '').slice(0, 100), url: tab.url }))
+    .filter(tab => tab.provider && Number.isInteger(tab.tab_id));
+}
+const deliveriesInFlight = new Set();
+async function deliverToConversation(payload) {
+  const { delivery_id, tab_id, diff_tokens, original_tokens, estimator } = payload || {};
+  if (typeof delivery_id !== 'string' || !/^[a-f0-9]{32}$/.test(delivery_id)) throw Error('Invalid prepared delivery ID.');
+  if (!Number.isInteger(tab_id) || !Number.isSafeInteger(diff_tokens) || diff_tokens < 0 ||
+      !Number.isSafeInteger(original_tokens) || original_tokens < 0 ||
+      typeof estimator !== 'string' || estimator.length > 120) throw Error('Estimate must be calculated before dispatch.');
+  if (deliveriesInFlight.has(delivery_id)) throw Error('This delivery is already in progress.');
+  deliveriesInFlight.add(delivery_id);
+  try {
+    const staged = await api('/api/v1/chat-sessions/delivery?' + new URLSearchParams({ delivery_id }));
+    if (staged.status !== 'prepared') throw Error('This delivery was already recorded as sent.');
+    if (staged.diff_tokens !== diff_tokens || staged.original_tokens !== original_tokens || staged.estimator !== estimator) {
+      throw Error('Token estimates must be saved to this delivery before dispatch.');
+    }
+    if (!staged.files.some(file => file.status !== 'unchanged')) throw Error('There are no changed files to send.');
+    const tab = await chrome.tabs.get(tab_id);
+    const identity = sessionFromUrl(tab.url || '');
+    if (identity?.provider !== staged.provider || identity?.conversation_id !== staged.conversation_id) {
+      throw Error('The selected browser tab no longer matches the prepared conversation.');
+    }
+    const response = await chrome.tabs.sendMessage(tab_id, { type: 'insert-and-send-diff',
+      payload: { provider: staged.provider, conversation_id: staged.conversation_id, text: staged.llm_diff } });
+    if (!response?.ok) throw Error(response?.error || 'Browser rejected the diff.');
+    if (!response.result?.confirmed) return { status:'unconfirmed', reason:response.result?.reason || 'Submission not verified.' };
+    const ack = await api('/api/v1/chat-sessions/delivery', { method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({delivery_id,diff_tokens,original_tokens,estimator}) });
+    return { ...ack, provider:staged.provider, conversation_id:staged.conversation_id };
+  } finally { deliveriesInFlight.delete(delivery_id); }
+}
+
+async function dashboardRequest(message, sender) {
+  await fromDashboard(sender);
+  if (message.type === 'list-sessions') return { sessions: await listBrowserSessions() };
+  if (message.type === 'open-provider') {
+    const provider = message.payload?.provider;
+    if (!['chatgpt','claude'].includes(provider)) throw Error('Unknown provider.');
+    const tab = await chrome.tabs.create({ url: provider === 'chatgpt' ? 'https://chatgpt.com/' : 'https://claude.ai/', active:true });
+    return { tab_id:tab.id, provider, status:'opened', note:'Start a conversation, then refresh sessions to discover its saved URL.' };
+  }
+  return deliverToConversation(message.payload);
+}
