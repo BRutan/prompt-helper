@@ -1,6 +1,7 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json tsconfig.json vite.config.ts index.html ./
+COPY vite.tokenizer.config.mjs ./
 COPY src ./src
 RUN npm install --no-audit --no-fund && npm run build
 
