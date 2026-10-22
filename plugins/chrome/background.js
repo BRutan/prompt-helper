@@ -4,6 +4,7 @@ import { expandGitDiff, inverseForNative, normalizeGitDiffPaths } from './symbol
 import { watchBuilds } from './build-watch.js';
 import { IS_LOCAL, CONFIGURED_ENDPOINT } from './runtime-config.js';
 import { compactGrid } from './session-layout.js';
+import { browserConversation, openConversations, dashboardGeometry } from './open-sessions.js';
 
 const DEFAULTS = { enabled: true, minChars: 1000, replaceOnPaste: true, symbolCompression: false };
 const API_PATH = '/api/v1/chat-sessions/diff';
@@ -118,8 +119,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       case 'get-open-sessions': return requireExtensionUI(sender).then(async () => ({ sessions: await listBrowserSessions(), config: await settings() }));
       case 'focus-session': return requireExtensionUI(sender).then(() => focusBrowserSession(message.tab_id));
-      case 'compact-sessions': return requireExtensionUI(sender).then(() => compactBrowserSessions(message.screen));
-      case 'open-dashboard-window': return requireExtensionUI(sender).then(() => openDashboardCompanion(message.screen));
+      case 'arrange-sessions': return requireExtensionUI(sender).then(() => arrangeBrowserSessions(message.screen));
+      case 'open-dashboard-window': return requireExtensionUI(sender).then(() => openDashboardCompanion(message.screen, message.origin_window_id));
       case 'set-options': {
         await requireExtensionUI(sender);
         const minChars = Number(message.minChars);
@@ -142,12 +143,16 @@ async function fromDashboard(sender) {
   if (origin !== expected) throw Error('Dashboard origin does not match prompt-helper settings.');
 }
 async function listBrowserSessions() {
-  const tabs = await chrome.tabs.query({});
-  return tabs.map(tab => ({ ...sessionFromUrl(tab.url || ''), id: tab.id,
-    tab_id: tab.id, window_id: tab.windowId, active: Boolean(tab.active), title: (tab.title || '').slice(0, 100), url: tab.url }))
-    .filter(tab => tab.provider && Number.isInteger(tab.tab_id));
+  // chrome.tabs.query({active:true}) sees only the selected tab in a window;
+  // getAll(populate) and the unfiltered tab query include EVERY tab in EVERY
+  // normal and popup Chrome window, even when hidden behind another window.
+  const [windows, tabs] = await Promise.all([
+    chrome.windows.getAll({populate:true,windowTypes:['normal','popup']}),
+    chrome.tabs.query({}),
+  ]);
+  return openConversations(windows,tabs);
 }
-// Popup-only tab/window operations. Web pages can never invoke them.
+// Popup-only tab/window operations. Provider web pages cannot invoke them.
 async function requireExtensionUI(sender) {
   if (sender.tab || !sender.url?.startsWith(chrome.runtime.getURL('popup.html'))) {
     throw Error('Sessions controls are available only from the extension popup.');
@@ -156,57 +161,71 @@ async function requireExtensionUI(sender) {
 async function focusBrowserSession(tabId) {
   if (!Number.isInteger(tabId)) throw Error('Invalid conversation tab.');
   const tab = await chrome.tabs.get(tabId);
-  if (!sessionFromUrl(tab.url || '')) throw Error('Tab is no longer an open conversation.');
-  await chrome.tabs.update(tabId, {active: true});
-  await chrome.windows.update(tab.windowId, {focused: true});
+  if (!browserConversation(tab)) throw Error('Tab is no longer a ChatGPT or Claude conversation.');
+  await chrome.tabs.update(tabId, {active:true});
+  await chrome.windows.update(tab.windowId, {focused:true});
   return {tab_id:tabId,window_id:tab.windowId};
 }
 function screenBounds(screen) {
-  const width = Number(screen?.width),height = Number(screen?.height);
+  const width = Number(screen?.width),height=Number(screen?.height);
   const left = Number(screen?.left),top=Number(screen?.top);
   if (![width,height,left,top].every(Number.isFinite) || width < 640 || height < 400 || width > 20000 || height > 20000 ||
       Math.abs(left) > 20000 || Math.abs(top) > 20000) throw Error('Invalid available display geometry.');
   return {width:Math.floor(width),height:Math.floor(height),left:Math.floor(left),top:Math.floor(top)};
 }
-async function compactBrowserSessions(screen) {
+async function arrangeBrowserSessions(screen) {
   const tabs = await listBrowserSessions();
-  if (!tabs.length) throw Error('No saved ChatGPT or Claude sessions are open.');
-  // Never duplicate provider tabs or wipe drafts: move each existing tab into
-  // its own small window. A non-fitting screen fails before ANY tabs are moved.
+  if (!tabs.length) throw Error('No ChatGPT or Claude sessions are open in Chrome.');
+  // All tabs, not just the currently focused conversation, are moved into
+  // separate NORMAL Chrome windows. No new conversation/tab is duplicated.
+  // The plan is calculated before moving the first tab.
   const rects = compactGrid(tabs.length,screenBounds(screen));
-  const windows = [];
+  const windowIds = [];
   for (let i = 0; i < tabs.length; i++) {
-    const created = await chrome.windows.create({tabId:tabs[i].tab_id, type:'popup',
-      focused:false, ...rects[i]});
-    windows.push(created.id);
+    const created = await chrome.windows.create({tabId:tabs[i].tab_id,type:'normal',
+      focused:false,...rects[i]});
+    windowIds.push(created.id);
   }
-  if (windows.length) await chrome.windows.update(windows[0],{focused:true});
-  return {count:windows.length,window_ids:windows};
+  if (windowIds.length) await chrome.windows.update(windowIds[0],{focused:true});
+  return {count:windowIds.length,window_ids:windowIds};
 }
-async function openDashboardCompanion(screen) {
-  const b = screenBounds(screen);
-  if (b.width < 1060) throw Error('At least 1060px of screen width is required for side-by-side sessions and dashboard.');
-  const sessionWidth = Math.max(390,Math.min(470,Math.floor(b.width*0.34)));
-  const dashWidth = b.width-sessionWidth;
-  const popupUrl = chrome.runtime.getURL('popup.html?view=sessions');
-  const windows = await chrome.windows.getAll({populate:true});
-  let sessionWindow = windows.find(w=>w.tabs?.some(t=>t.url?.startsWith(popupUrl)));
-  if (sessionWindow) {
-    await chrome.windows.update(sessionWindow.id,{state:'normal',left:b.left,top:b.top,width:sessionWidth,height:b.height,focused:false});
-  } else {
-    sessionWindow = await chrome.windows.create({url:popupUrl,type:'popup',
-      left:b.left,top:b.top,width:sessionWidth,height:b.height,focused:false});
+async function normalChromeWindow(preferredId) {
+  // The extension action popup is NOT the window to resize. Reuse a browser
+  // window (normal) and preserve all of its tabs and unsent composer content.
+  if (Number.isInteger(preferredId)) {
+    try {
+      const preferred = await chrome.windows.get(preferredId);
+      if (preferred?.type === 'normal') return preferred;
+    } catch { /* Window closed between button press and handler. */ }
   }
+  const last = await chrome.windows.getLastFocused({windowTypes:['normal']}).catch(()=>null);
+  if (last?.type === 'normal') return last;
+  const windows = await chrome.windows.getAll({populate:true,windowTypes:['normal']});
+  const candidates = windows.filter(w => w.type === 'normal');
+  // Prefer a normal window holding a provider session if Chrome focus changed.
+  const matching = candidates.find(w => w.tabs?.some(t => browserConversation(t)));
+  return matching || candidates.find(w => w.focused) || candidates[0] || null;
+}
+async function openDashboardCompanion(screen,preferredWindowId) {
+  const b = screenBounds(screen);
+  const geometry = dashboardGeometry(b);
+  const origin = await normalChromeWindow(preferredWindowId);
+  if (!origin) throw Error('Open a normal Google Chrome window before opening the dashboard.');
+  // Existing Chrome window on the LEFT, not another prompt-helper plugin window.
+  await chrome.windows.update(origin.id,{state:'normal',...geometry.chrome,focused:false});
   const dashboardUrl = configuredEndpoint()+'/';
-  let dashboard = windows.find(w=>w.type==='popup' && w.tabs?.some(t=>t.url===dashboardUrl));
-  if (dashboard) {
-    await chrome.windows.update(dashboard.id,{state:'normal',left:b.left+sessionWidth,top:b.top,
-      width:dashWidth,height:b.height,focused:true});
+  const all = await chrome.windows.getAll({populate:true});
+  // Reuse an existing dashboard window, except the origin that was just resized.
+  const prior = all.find(w => w.id !== origin.id && w.tabs?.some(t => t.url === dashboardUrl));
+  let dashboard;
+  if (prior) {
+    await chrome.windows.update(prior.id,{state:'normal',...geometry.dashboard,focused:true});
+    dashboard = prior;
   } else {
     dashboard = await chrome.windows.create({url:dashboardUrl,type:'popup',
-      left:b.left+sessionWidth,top:b.top,width:dashWidth,height:b.height,focused:true});
+      ...geometry.dashboard,focused:true});
   }
-  return {sessions_window_id:sessionWindow.id,dashboard_window_id:dashboard.id};
+  return {chrome_window_id:origin.id,dashboard_window_id:dashboard.id};
 }
 
 function validSymbolIdentity(provider,id){return ['chatgpt','claude'].includes(provider)&&typeof id==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(id);}

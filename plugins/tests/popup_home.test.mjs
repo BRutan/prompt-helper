@@ -38,6 +38,7 @@ const chrome={runtime:{lastError:null,sendMessage:(req,done)=>{
 }}};
 const location={search:''};
 const window={screen:{availLeft:0,availTop:0,availWidth:1500,availHeight:900}};
+chrome.windows={getCurrent:async()=>({id:42,type:'normal'})};
 Object.assign(globalThis,{document,chrome,location,window});
 await import('../chrome/popup.js');
 
@@ -79,4 +80,12 @@ test('on/off is persisted through background and dashboard remains a home action
   assert.equal($('enabled-state').textContent,'ON');
   await $('dashboard-button').click();
   assert.equal(messages.at(-1).type,'open-dashboard-window');
+  assert.equal(messages.at(-1).origin_window_id,42);
+});
+
+test('sessions view calls the new arranger and labels action correctly',async()=>{
+  assert.match(html,/id="arrange-sessions"[^>]*>Arrange sessions<\/button>/);
+  await $('sessions-button').click();
+  await $('arrange-sessions').click();
+  assert.equal(messages.at(-2).type,'arrange-sessions');
 });

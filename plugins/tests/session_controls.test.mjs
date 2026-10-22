@@ -5,6 +5,12 @@ const conversations = [
  {id:1,windowId:10,url:'https://chatgpt.com/c/chat-a',active:true,title:'ChatGPT A'},
  {id:2,windowId:11,url:'https://claude.ai/chat/chat-b',active:true,title:'Claude B'},
  {id:3,windowId:11,url:'https://chatgpt.com/c/chat-c',active:false,title:'ChatGPT C'},
+ {id:4,windowId:12,url:'https://claude.ai/new',active:false,title:'New Claude Chat'},
+];
+const browserWindows = [
+  {id:10,type:'normal',focused:true,tabs:[conversations[0]]},
+  {id:11,type:'normal',focused:false,tabs:[conversations[1],conversations[2]]},
+  {id:12,type:'popup',focused:false,tabs:[conversations[3]]},
 ];
 const calls=[];
 let enabled=true;
@@ -28,10 +34,12 @@ const chrome={
   onUpdated:{addListener:()=>{}},
  },
  windows:{
-  get:async(id)=>({id,focused:true}),
+  get:async(id)=>browserWindows.find(w=>w.id===id) || {id,type:'popup'},
+  getLastFocused:async()=>browserWindows[0],
   update:async(id,props)=>{calls.push(['window-update',id,props])},
   create:async(props)=>{calls.push(['window-create',props]);return{id:200+calls.length}},
-  getAll:async()=>[],
+  getAll:async(opts)=> opts?.windowTypes?.includes('normal') && !opts?.windowTypes?.includes('popup')
+    ? browserWindows.filter(w=>w.type==='normal') : browserWindows,
  },
  action:{setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{}},
  downloads:{onChanged:{addListener:()=>{},removeListener:()=>{}},onCreated:{addListener:()=>{},removeListener:()=>{}}},
@@ -49,7 +57,7 @@ function send(type, extra={}){
 test('enumerates sessions and never follows stored endpoint override',async()=>{
  const result=await send('get-open-sessions');
  assert.equal(result.ok,true);
- assert.equal(result.result.sessions.length,3);
+ assert.equal(result.result.sessions.length,4);
  assert.equal(result.result.config.endpoint,'http://127.0.0.1:5173');
 });
 test('jump focuses original tab and window',async()=>{
@@ -58,20 +66,32 @@ test('jump focuses original tab and window',async()=>{
  assert.deepEqual(calls[0],['tab-update',2,{active:true}]);
  assert.deepEqual(calls[1],['window-update',11,{focused:true}]);
 });
-test('compact moves sessions into bounded windows and dashboard opens to the right',async()=>{
+test('arrange moves EVERY conversation into its own normal Chrome window',async()=>{
  calls.length=0;
- const compact=await send('compact-sessions',{screen:{left:0,top:0,width:1440,height:900}});
- assert.equal(compact.ok,true);
- const windows=calls.filter(c=>c[0]==='window-create');
- assert.equal(windows.length,3);
- for(const [,w] of windows){assert.ok(w.tabId);assert.ok(w.height>=400);assert.ok(w.width>=480)}
+ const arranged=await send('arrange-sessions',{screen:{left:0,top:0,width:1600,height:950}});
+ assert.equal(arranged.ok,true);
+ const created=calls.filter(c=>c[0]==='window-create');
+ assert.equal(created.length,4);
+ assert.deepEqual(created.map(c=>c[1].tabId),[1,2,3,4]);
+ assert.ok(created.every(c=>c[1].type==='normal'));
+ for(const [,w] of created){assert.ok(w.width>=480);assert.ok(w.height>=400)}
+ assert.ok(new Set(created.map(c=>c[1].top)).size>=2,'multi-line layout preferred');
+});
+test('open dashboard resizes the CURRENT normal Chrome window, no plugin window',async()=>{
  calls.length=0;
- const dashboard=await send('open-dashboard-window',{screen:{left:0,top:0,width:1440,height:900}});
- assert.equal(dashboard.ok,true);
+ const response=await send('open-dashboard-window',{
+   screen:{left:0,top:0,width:1600,height:900},origin_window_id:11,
+ });
+ assert.equal(response.ok,true);
+ assert.equal(response.result.chrome_window_id,11);
+ const resized=calls.filter(c=>c[0]==='window-update' && c[1]===11);
+ assert.equal(resized.length,1);
+ assert.deepEqual({left:resized[0][2].left,top:resized[0][2].top,width:resized[0][2].width,height:resized[0][2].height},{left:0,top:0,width:800,height:900});
  const opened=calls.filter(c=>c[0]==='window-create');
- assert.equal(opened.length,2);
- assert.ok(opened[1][1].left>=opened[0][1].left+opened[0][1].width);
- assert.ok(opened[1][1].url.startsWith('http://127.0.0.1:5173'));
+ assert.equal(opened.length,1,'dashboard is the only newly opened window');
+ assert.equal(opened[0][1].left,800);
+ assert.equal(opened[0][1].width,800);
+ assert.ok(opened[0][1].url.startsWith('http://127.0.0.1:5173'));
 });
 test('untrusted webpage cannot focus an unrelated session',async()=>{
  const r=await new Promise(resolve=>handler({type:'focus-session',tab_id:1},{url:'https://chatgpt.com/c/chat-a',tab:{id:1}},resolve));

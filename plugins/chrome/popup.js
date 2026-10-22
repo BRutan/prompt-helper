@@ -32,13 +32,8 @@ async function switchView(target) {
   if (target === 'sessions') await refreshSessions();
 }
 function renderSessions(sessions) {
-  const counts = {chatgpt:0,claude:0}, seen = {chatgpt:new Set(),claude:new Set()};
-  for (const item of sessions) {
-    if (!seen[item.provider]) continue;
-    if (!seen[item.provider].has(item.conversation_id)) {
-      seen[item.provider].add(item.conversation_id); counts[item.provider]++;
-    }
-  }
+  const counts = {chatgpt:0,claude:0};
+  for (const item of sessions) if (Object.hasOwn(counts,item.provider)) counts[item.provider]++;
   $('chatgpt-count').textContent = String(counts.chatgpt);
   $('claude-count').textContent = String(counts.claude);
   const list = $('session-list'); list.replaceChildren();
@@ -49,7 +44,7 @@ function renderSessions(sessions) {
     for (const entry of group) {
       const button = document.createElement('button'); button.className='session'; button.type='button'; button.setAttribute('role','listitem');
       const title = document.createElement('span');title.className='name';title.textContent=entry.title || `${name[provider]} conversation`;
-      const detail = document.createElement('small');detail.textContent=`${entry.conversation_id} · Window ${entry.window_id}${entry.active?' · Active':''}`;
+      const detail = document.createElement('small');detail.textContent=`${entry.conversation_id || 'New / unsaved conversation'} · Window ${entry.window_id}${entry.active?' · Active':''}`;
       button.append(title,detail);
       button.addEventListener('click',async()=>{
         try { clearError(); await call({type:'focus-session',tab_id:entry.tab_id}); }
@@ -90,15 +85,22 @@ $('settings-button').addEventListener('click',()=>void switchView('settings'));
 $('sessions-back').addEventListener('click',()=>void switchView('home'));
 $('settings-back').addEventListener('click',()=>void switchView('home'));
 $('refresh-sessions').addEventListener('click',()=>void refreshSessions());
-$('compact-sessions').addEventListener('click',async()=>{
+$('arrange-sessions').addEventListener('click',async()=>{
   try {
-    clearError(); const result=await call({type:'compact-sessions',screen:bounds()});
-    $('session-list').setAttribute('aria-label',`${result.count} compact session windows opened`);
+    clearError(); const result=await call({type:'arrange-sessions',screen:bounds()});
+    $('session-list').setAttribute('aria-label',`${result.count} sessions arranged in separate windows`);
     await refreshSessions();
   } catch(error) { showError(error); }
 });
 $('dashboard-button').addEventListener('click',async()=>{
-  try { clearError(); await call({type:'open-dashboard-window',screen:bounds()}); }
+  try {
+    clearError();
+    // Chrome associates a toolbar popup with a browser window. Pass that ID
+    // when it is a normal browser window; background validates it again.
+    const current = await chrome.windows.getCurrent().catch(()=>null);
+    await call({type:'open-dashboard-window',screen:bounds(),
+      origin_window_id:current?.type==='normal'?current.id:null});
+  }
   catch(error) { showError(error); }
 });
 $('enabled-toggle').addEventListener('click',async()=>{
