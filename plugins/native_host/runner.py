@@ -21,6 +21,10 @@ import sys
 import tempfile
 import zipfile
 
+# import sibling module also when runner.py is loaded directly by importlib tests
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import session_media
+
 MAX_MESSAGE = 1_048_576
 MAX_PATCH_BYTES = 25 * 1024 * 1024
 MAX_OUTPUT = 12_000
@@ -189,7 +193,24 @@ def apply_download(repo_path: str, filename: str, symbol_mapping: dict | None = 
 
 
 def handle(request: dict) -> dict:
-    if request.get('action') != 'apply_patch':
+    action = request.get('action')
+    if action in ('session_media_status', 'session_media_choose_folder',
+                  'session_media_configure', 'session_media_upload_dialog'):
+        try:
+            if action == 'session_media_status':
+                state = session_media.read_state()
+                return {'ok': True, 'enabled': bool(state.get('enabled')),
+                        'folder': state.get('folder', ''),
+                        'repository_folder': str(session_media.destination())}
+            if action == 'session_media_choose_folder':
+                return {'ok': True, 'folder': session_media.choose_folder()}
+            if action == 'session_media_configure':
+                return {'ok': True, **session_media.configure(request.get('enabled'), request.get('folder'))}
+            if action == 'session_media_upload_dialog':
+                return {'ok': True, **session_media.navigate_open_panel(request.get('conversation_id'))}
+        except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+            return {'ok': False, 'error': str(exc)[:MAX_OUTPUT]}
+    if action != 'apply_patch':
         return {'ok': False, 'error': 'Unsupported native action'}
     repo, path = request.get('repo_path'), request.get('download_path')
     if not isinstance(repo, str) or not isinstance(path, str):

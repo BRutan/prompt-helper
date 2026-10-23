@@ -4,3 +4,4 @@ node_modules/
 frontend/dist/
 *.log
 dist/
+__pycache__/

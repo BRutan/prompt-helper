@@ -13,7 +13,13 @@ import zipfile
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / 'plugins' / 'chrome'
 DEFAULT_OUT = ROOT / 'dist' / 'chrome'
-REQUIRED = ('manifest.json', 'session.js', 'background.js', 'content.js', 'delivery-content.js', 'response-monitor.js', 'dashboard-bridge.js', 'popup.html', 'popup.js', 'package.json', 'symbol-compression.js')
+REQUIRED = (
+    'manifest.json', 'session.js', 'background.js', 'build-watch.js',
+    'content.js', 'delivery-content.js', 'response-monitor.js', 'session-media-upload.js',
+    'dashboard-bridge.js', 'popup.html', 'popup.js', 'package.json',
+    'runtime-config.js', 'session-layout.js', 'session-arrangement.js',
+    'open-sessions.js', 'symbol-compression.js',
+)
 
 
 def build(destination: Path) -> tuple[Path, Path]:

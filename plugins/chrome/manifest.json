@@ -34,7 +34,8 @@
       "js": [
         "content.js",
         "delivery-content.js",
-        "response-monitor.js"
+        "response-monitor.js",
+        "session-media-upload.js"
       ],
       "run_at": "document_idle",
       "all_frames": false

@@ -25,7 +25,7 @@
   .subhead .back{padding:6px 10px;background:#223b5a;border:1px solid #536b88;min-width:56px}
   .form-fields{display:grid;gap:12px}
   .field-label{display:grid;gap:6px;font-weight:600}
-  input[type=number]{background:#23344c;color:#fff;border:1px solid #496282;border-radius:6px;padding:9px;width:100%}
+  input[type=number],input[type=text]{background:#23344c;color:#fff;border:1px solid #496282;border-radius:6px;padding:9px;width:100%}
   .check-label{display:flex;gap:9px;align-items:flex-start;line-height:1.45}
   .check-label input{margin-top:3px;accent-color:#5985c8}
   #save{justify-self:start}
@@ -75,6 +75,12 @@
     <label class="field-label" for="minimum">Minimum source characters<input id="minimum" type="number" min="100" max="1000000"></label>
     <label class="check-label"><input id="replace" type="checkbox"> Replace eligible pasted source automatically</label>
     <label class="check-label"><input id="symbol-compression" type="checkbox"> Code symbol compression by dialect (Git patches)</label>
+    <label class="check-label"><input id="aggregate-session-media" type="checkbox"> Aggregate Session Media (macOS screenshots and screen recordings)</label>
+    <label class="field-label" for="session-media-folder">Session Media folder
+      <input id="session-media-folder" type="text" placeholder="Choose a local screenshot folder" readonly aria-describedby="session-media-help">
+    </label>
+    <button id="choose-session-media-folder" class="secondary" type="button">Choose folder…</button>
+    <p id="session-media-help" class="muted">While enabled, macOS saves new screenshots to this folder. Captures made in an active saved ChatGPT/Claude conversation are also copied to repository/data/session_media/&lt;session_id&gt;. macOS Accessibility permission is needed to jump to this folder in upload dialogs.</p>
     <button id="save" type="button">Save settings</button>
     <p id="settings-status" role="status" aria-live="polite"></p>
   </div>

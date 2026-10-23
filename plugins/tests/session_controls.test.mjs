@@ -66,16 +66,23 @@ test('jump focuses original tab and window',async()=>{
  assert.deepEqual(calls[0],['tab-update',2,{active:true}]);
  assert.deepEqual(calls[1],['window-update',11,{focused:true}]);
 });
-test('arrange moves EVERY conversation into its own normal Chrome window',async()=>{
+test('arrange all sessions: reuse isolated normal windows, split only shared/popup tabs',async()=>{
  calls.length=0;
  const arranged=await send('arrange-sessions',{screen:{left:0,top:0,width:1600,height:950}});
  assert.equal(arranged.ok,true);
+ assert.equal(arranged.result.count,4);
+ assert.equal(arranged.result.layout,'tiled');
  const created=calls.filter(c=>c[0]==='window-create');
- assert.equal(created.length,4);
- assert.deepEqual(created.map(c=>c[1].tabId),[1,2,3,4]);
- assert.ok(created.every(c=>c[1].type==='normal'));
- for(const [,w] of created){assert.ok(w.width>=480);assert.ok(w.height>=400)}
- assert.ok(new Set(created.map(c=>c[1].top)).size>=2,'multi-line layout preferred');
+ assert.equal(created.length,2,'existing normal browser windows MUST be reused');
+ assert.deepEqual(created.map(c=>c[1].tabId),[3,4]);
+ assert.ok(created.every(c=>c[1].type==='normal' && c[1].focused===false));
+ assert.deepEqual(arranged.result.window_ids.slice(0,2),[10,11]);
+ const sized=calls.filter(c=>c[0]==='window-update' && 'width' in c[2]);
+ assert.equal(sized.length,4);
+ assert.deepEqual(sized.map(c=>c[2].width),[800,800,800,800]);
+ assert.ok(sized.every(c=>c[2].height>=440));
+ assert.ok(new Set(sized.map(c=>c[2].top)).size>=2);
+ assert.equal(calls.filter(c=>c[0]==='tab-update').length,0,'no reload/navigation/activation');
 });
 test('open dashboard resizes the CURRENT normal Chrome window, no plugin window',async()=>{
  calls.length=0;

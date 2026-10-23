@@ -3,13 +3,26 @@ import { sessionFromUrl, looksLikeSource, localBaseUrl } from './session.js';
 import { expandGitDiff, inverseForNative, normalizeGitDiffPaths } from './symbol-compression.js';
 import { watchBuilds } from './build-watch.js';
 import { IS_LOCAL, CONFIGURED_ENDPOINT } from './runtime-config.js';
-import { compactGrid } from './session-layout.js';
+import { compactGrid, layoutOverlaps } from './session-layout.js';
+import { planSessionWindows } from './session-arrangement.js';
 import { browserConversation, openConversations, dashboardGeometry } from './open-sessions.js';
 
-const DEFAULTS = { enabled: true, minChars: 1000, replaceOnPaste: true, symbolCompression: false };
+const DEFAULTS = { enabled: true, minChars: 1000, replaceOnPaste: true, symbolCompression: false,
+  aggregateSessionMedia: false, sessionMediaFolder: '' };
 const API_PATH = '/api/v1/chat-sessions/diff';
 const inFlight = new Map();
 const recent = new Map();
+
+async function sessionMediaNative(payload) {
+  let response;
+  try {
+    response = await chrome.runtime.sendNativeMessage('com.prompt_helper.patch_runner', payload);
+  } catch (error) {
+    throw Error('Install the prompt-helper macOS native host before enabling Session Media: ' + String(error));
+  }
+  if (!response?.ok) throw Error(response?.error || 'Session Media native helper failed');
+  return response;
+}
 
 function configuredEndpoint() {
   if (IS_LOCAL) return localBaseUrl(CONFIGURED_ENDPOINT);
@@ -106,7 +119,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'commit-symbol-registry': return dashboardRequest(message, sender);
       case 'assistant-response-complete': return responseCompleted(message.payload, sender);
       case 'assistant-response-timeout': return responseTimedOut(message.delivery_id, sender);
-      case 'get-popup-config': return requireExtensionUI(sender).then(() => settings());
+      case 'get-popup-config': return requireExtensionUI(sender).then(async () => {
+        const config = await settings();
+        // Native state is authoritative even if the browser extension is reloaded.
+        try {
+          const native = await sessionMediaNative({action:'session_media_status'});
+          return {...config, aggregateSessionMedia:native.enabled,
+            sessionMediaFolder:config.sessionMediaFolder || native.folder};
+        } catch { return config; }
+      });
+      case 'choose-session-media-folder': {
+        await requireExtensionUI(sender);
+        const choice = await sessionMediaNative({action:'session_media_choose_folder'});
+        // Chrome closes toolbar popups while a native macOS picker has focus.
+        // Persist the selection immediately so reopening Settings retains it.
+        await chrome.storage.local.set({sessionMediaFolder:choice.folder});
+        return choice;
+      }
+      case 'session-media-upload-dialog': {
+        const session = sessionFromUrl(sender?.tab?.url || '');
+        if (!session || !sender.tab?.active) throw Error('Only a saved, active conversation can open session media.');
+        const config = await settings();
+        if (!config.aggregateSessionMedia) return {navigated:false,reason:'disabled'};
+        // Native helper only navigates an existing Open dialog; it cannot pick files.
+        return sessionMediaNative({action:'session_media_upload_dialog',conversation_id:session.conversation_id});
+      }
+
       case 'set-enabled': {
         await requireExtensionUI(sender);
         if (typeof message.enabled !== 'boolean') throw Error('enabled must be a boolean');
@@ -125,7 +163,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         await requireExtensionUI(sender);
         const minChars = Number(message.minChars);
         if (!Number.isInteger(minChars) || minChars < 100 || minChars > 1000000) throw Error('minChars must be 100..1000000');
-        const options = { minChars, replaceOnPaste: Boolean(message.replaceOnPaste), symbolCompression: Boolean(message.symbolCompression) };
+        if (typeof message.aggregateSessionMedia !== 'boolean') throw Error('Aggregate Session Media must be on or off.');
+        if (typeof message.sessionMediaFolder !== 'string') throw Error('Invalid Session Media folder.');
+        const prior = await settings();
+        // Ordinary settings remain usable without installing the native host.
+        let media = {enabled:false,folder:message.sessionMediaFolder};
+        if (message.aggregateSessionMedia || prior.aggregateSessionMedia) {
+          media = await sessionMediaNative({action:'session_media_configure',
+            enabled:message.aggregateSessionMedia,folder:message.sessionMediaFolder});
+        }
+        const options = { minChars, replaceOnPaste: Boolean(message.replaceOnPaste),
+          symbolCompression: Boolean(message.symbolCompression),
+          aggregateSessionMedia:media.enabled, sessionMediaFolder:media.folder };
         await chrome.storage.local.set(options);
         return options;
       }
@@ -173,22 +222,57 @@ function screenBounds(screen) {
       Math.abs(left) > 20000 || Math.abs(top) > 20000) throw Error('Invalid available display geometry.');
   return {width:Math.floor(width),height:Math.floor(height),left:Math.floor(left),top:Math.floor(top)};
 }
+let arrangementInProgress = false;
 async function arrangeBrowserSessions(screen) {
-  const tabs = await listBrowserSessions();
-  if (!tabs.length) throw Error('No ChatGPT or Claude sessions are open in Chrome.');
-  // All tabs, not just the currently focused conversation, are moved into
-  // separate NORMAL Chrome windows. No new conversation/tab is duplicated.
-  // The plan is calculated before moving the first tab.
-  const rects = compactGrid(tabs.length,screenBounds(screen));
-  const windowIds = [];
-  for (let i = 0; i < tabs.length; i++) {
-    const created = await chrome.windows.create({tabId:tabs[i].tab_id,type:'normal',
-      focused:false,...rects[i]});
-    windowIds.push(created.id);
-  }
-  if (windowIds.length) await chrome.windows.update(windowIds[0],{focused:true});
-  return {count:windowIds.length,window_ids:windowIds};
+  if (arrangementInProgress) throw Error('A session arrangement is already running.');
+  arrangementInProgress = true;
+  try {
+    const bounds = screenBounds(screen);
+    // Query all tabs and windows ONCE to choose which existing windows can be
+    // reused. This avoids reparenting isolated tabs, which can reinitialize
+    // the provider UI and retrigger account/security checks.
+    const [windows, allTabs] = await Promise.all([
+      chrome.windows.getAll({populate:true,windowTypes:['normal','popup']}),
+      chrome.tabs.query({}),
+    ]);
+    const sessions = openConversations(windows,allTabs);
+    if (!sessions.length) throw Error('No ChatGPT or Claude sessions are open in Chrome.');
+    const rects = compactGrid(sessions.length,bounds);
+    const plan = planSessionWindows(sessions,windows);
+    const targets = [];
+    const createdWindowIds = [];
+    // Do not focus windows or navigate ChatGPT as part of arranging. Split
+    // only the tabs sharing a window (or living in a popup). All others stay.
+    for (const step of plan) {
+      if (step.reuse_window_id !== null) {
+        targets.push(step.reuse_window_id);
+        continue;
+      }
+      const tab = await chrome.tabs.get(step.tab_id);
+      if (!browserConversation(tab)) throw Error(`Conversation tab ${step.tab_id} was closed while arranging.`);
+      const created = await chrome.windows.create({tabId:step.tab_id,type:'normal',focused:false});
+      if (!Number.isInteger(created?.id)) throw Error('Chrome did not return a new window ID.');
+      createdWindowIds.push(created.id);
+      targets.push(created.id);
+    }
+    // macOS Chrome can ignore bounds requested in windows.create (and clamps
+    // tiny rectangles to its own minimum). Apply positions to final windows,
+    // after all detaches, using Chrome's normal-window update API.
+    for (let i=0;i<targets.length;i++) {
+      await chrome.windows.update(targets[i],{state:'normal'});
+      await chrome.windows.update(targets[i],rects[i]);
+    }
+    // Keep a deterministic foreground chat but do not change its URL/tab.
+    const previouslyFocusedId = windows.find(w=>w.focused && w.type==='normal')?.id;
+    let focusIndex = sessions.findIndex(s=>s.window_id===previouslyFocusedId && s.active);
+    if (focusIndex<0) focusIndex = sessions.findIndex(s=>s.active);
+    const focusId = targets[focusIndex>=0?focusIndex:0];
+    if (Number.isInteger(focusId)) await chrome.windows.update(focusId,{focused:true});
+    return {count:targets.length,window_ids:targets,created_window_ids:createdWindowIds,
+      layout:layoutOverlaps(rects)?'staggered':'tiled'};
+  } finally { arrangementInProgress = false; }
 }
+
 async function normalChromeWindow(preferredId) {
   // The extension action popup is NOT the window to resize. Reuse a browser
   // window (normal) and preserve all of its tabs and unsent composer content.
@@ -470,7 +554,7 @@ watchBuilds();
 // Static manifest scripts attach automatically on new loads, but Chrome does
 // not inject them retroactively into pages that were open during installation.
 const activation = new Map();
-const CHAT_FILES = ['content.js','delivery-content.js','response-monitor.js'];
+const CHAT_FILES = ['content.js','delivery-content.js','response-monitor.js','session-media-upload.js'];
 async function activateExistingTab(tab) {
   if (!tab || !Number.isInteger(tab.id) || !sessionFromUrl(tab.url || '')) return false;
   if (activation.has(tab.id)) return activation.get(tab.id);

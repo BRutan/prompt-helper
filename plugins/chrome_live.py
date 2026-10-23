@@ -26,8 +26,8 @@ EXTENSION_FOLDER = 'prompt-helper-chrome'
 CHROME_URL = 'chrome://extensions'
 SOURCE_FILES = (
     'manifest.json', 'session.js', 'background.js', 'build-watch.js',
-    'content.js', 'delivery-content.js', 'response-monitor.js',
-    'dashboard-bridge.js', 'popup.html', 'popup.js', 'runtime-config.js', 'session-layout.js', 'open-sessions.js', 'package.json',
+    'content.js', 'delivery-content.js', 'response-monitor.js', 'session-media-upload.js',
+    'dashboard-bridge.js', 'popup.html', 'popup.js', 'runtime-config.js', 'session-layout.js', 'session-arrangement.js', 'open-sessions.js', 'package.json',
     'symbol-compression.js',
 )
 

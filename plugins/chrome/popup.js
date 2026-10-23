@@ -77,6 +77,8 @@ async function init() {
     $('minimum').value = config.minChars;
     $('replace').checked = config.replaceOnPaste;
     $('symbol-compression').checked = Boolean(config.symbolCompression);
+    $('aggregate-session-media').checked = Boolean(config.aggregateSessionMedia);
+    $('session-media-folder').value = config.sessionMediaFolder || '';
     if (view === 'sessions') await refreshSessions();
   } catch(error) { showError(error); }
 }
@@ -113,10 +115,22 @@ $('enabled-toggle').addEventListener('click',async()=>{
   } catch(error) { showError(error); }
   finally { toggle.disabled=false; }
 });
+$('choose-session-media-folder').addEventListener('click',async()=>{
+  const button = $('choose-session-media-folder');
+  button.disabled = true;
+  try {
+    clearError();
+    const result = await call({type:'choose-session-media-folder'});
+    $('session-media-folder').value = result.folder;
+  } catch(error) { showError(error); }
+  finally { button.disabled = false; }
+});
 $('save').addEventListener('click',async()=>{
   try {
     await call({type:'set-options',minChars:Number($('minimum').value),
-      replaceOnPaste:$('replace').checked,symbolCompression:$('symbol-compression').checked});
+      replaceOnPaste:$('replace').checked,symbolCompression:$('symbol-compression').checked,
+      aggregateSessionMedia:$('aggregate-session-media').checked,
+      sessionMediaFolder:$('session-media-folder').value});
     $('settings-status').textContent='Settings saved.';clearError();
   } catch(error) { $('settings-status').textContent='';showError(error); }
 });
