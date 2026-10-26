@@ -195,7 +195,7 @@ def apply_download(repo_path: str, filename: str, symbol_mapping: dict | None = 
 def handle(request: dict) -> dict:
     action = request.get('action')
     if action in ('session_media_status', 'session_media_choose_folder',
-                  'session_media_configure', 'session_media_upload_dialog'):
+                  'session_media_configure'):
         try:
             if action == 'session_media_status':
                 state = session_media.read_state()
@@ -206,20 +206,10 @@ def handle(request: dict) -> dict:
                 return {'ok': True, 'folder': session_media.choose_folder()}
             if action == 'session_media_configure':
                 return {'ok': True, **session_media.configure(request.get('enabled'), request.get('folder'))}
-            if action == 'session_media_upload_dialog':
-                return {'ok': True, **session_media.navigate_open_panel(request.get('conversation_id'))}
         except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
             return {'ok': False, 'error': str(exc)[:MAX_OUTPUT]}
-    if action != 'apply_patch':
-        return {'ok': False, 'error': 'Unsupported native action'}
-    repo, path = request.get('repo_path'), request.get('download_path')
-    if not isinstance(repo, str) or not isinstance(path, str):
-        return {'ok': False, 'error': 'repo_path and download_path are required strings'}
-    try:
-        return apply_download(repo, path, request.get('symbol_mapping'))
-    except (ValueError, OSError, zipfile.BadZipFile, subprocess.TimeoutExpired) as exc:
-        return {'ok': False, 'stage': 'validation', 'error': str(exc)[:MAX_OUTPUT]}
-
+    # Manual-only workflow: patches are downloaded and applied by the user.
+    return {'ok': False, 'error': 'Unsupported native action'}
 
 def read_message():
     head = sys.stdin.buffer.read(4)

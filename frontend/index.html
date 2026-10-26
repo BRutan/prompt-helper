@@ -34,7 +34,7 @@
         </section>
         <div class="main-grid">
           <section class="panel editor-panel">
-            <div class="panel-head"><div><h3>Large file input</h3><p>Stage a source dump locally, calculate session-specific diffs, then send only changed files</p></div><span id="input-lang" class="tag">Awaiting source</span></div>
+            <div class="panel-head"><div><h3>Large file input</h3><p>Stage a source dump locally, calculate session-specific diffs, then review and manually send only changed files</p></div><span id="input-lang" class="tag">Awaiting source</span></div>
             <div class="examples">Header examples:
               <button type="button" data-example="ts">TypeScript</button>
               <button type="button" data-example="py">Python</button>
@@ -50,13 +50,13 @@
             <textarea id="user-prompt" required rows="5" placeholder="Describe the changes to make and request a downloadable Git patch…"></textarea>
             <label for="target-repo">Target Git repository on this Mac (absolute root path)</label>
             <input id="target-repo" required type="text" placeholder="/Users/you/Desktop/repos/project" autocomplete="off" spellcheck="false" />
-            <p class="hint">A local Chrome Native Messaging helper applies returned patches to this Git repository. Only git apply is supported; arbitrary chatbot shell commands are never executed.</p>
+            <p class="hint">The extension does not send prompts or download responses. Review the prepared text in its small window, copy it, manually send it in ChatGPT, and manually download the resulting patch.</p>
             <div class="actions"><button id="submit" class="primary" type="button">Prepare session diff <span>⌘ ↵</span></button><span id="input-count">0 chars</span></div>
             <p id="token-estimate" class="hint" aria-live="polite">Prepare a file to calculate estimated input tokens before sending.</p>
-            <div class="actions"><button id="send-session" type="button" class="primary" disabled>Send to session</button>
-              <button id="confirm-session" type="button" class="secondary" hidden>Confirm sent</button></div>
+            <div class="actions"><button id="send-session" type="button" class="primary" disabled>Review prompt in window</button>
+              <button id="confirm-session" type="button" class="secondary" hidden>Confirm manually sent</button></div>
             <p id="session-message" role="status" aria-live="polite"></p>
-            <p id="response-metrics" class="hint" aria-live="polite">Response time: pending · Patch: pending</p>
+            <p id="response-metrics" class="hint" aria-live="polite">Manual response confirmation required · Download patches from the chat or from a link you paste into the prompt window</p>
             <div id="error" role="alert" class="error" hidden></div>
           </section>
           <section class="panel result-panel">

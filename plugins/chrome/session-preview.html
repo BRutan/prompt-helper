@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prompt Helper — Manual handoff</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}
+body{margin:0;padding:20px;font:14px system-ui,-apple-system,sans-serif;background:#111a29;color:#eff4fd}
+h1{font-size:18px;margin:0 0 6px}p{color:#b6c5d9;line-height:1.4}
+header{display:flex;align-items:center;justify-content:space-between;gap:10px}
+#badge{font-weight:800;font-size:13px;color:#12223a;background:#eabf6a;border-radius:20px;padding:5px 10px}
+#identity{margin:4px 0 16px;word-break:break-word}textarea{resize:vertical;min-height:210px;width:100%;padding:12px;
+ background:#071121;color:#f2f6ff;border:1px solid #4c627e;border-radius:7px;font:12px/1.5 ui-monospace,SFMono-Regular,monospace}
+button{border:0;border-radius:7px;padding:10px 13px;background:#5685cc;color:#fff;cursor:pointer;font:inherit}
+button.secondary{background:#293b54;border:1px solid #526681}button:disabled{opacity:.45;cursor:not-allowed}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}input{background:#14263e;color:white;border:1px solid #526681;
+ border-radius:6px;padding:10px;min-width:100%;margin:6px 0 4px}
+a{color:#a7d2ff;overflow-wrap:anywhere}#download{display:none;margin-top:9px;font-weight:650}
+label{display:block;margin-top:14px;font-weight:600}.note{font-size:12px}
+#message{color:#a8e7c0;min-height:22px;white-space:pre-wrap}#error{color:#ffb6b6;white-space:pre-wrap}
+</style></head><body>
+<header><h1>Manual session prompt</h1><span id="badge">No prompt</span></header>
+<p id="identity"></p>
+<p class="note">This extension does not submit prompts, inspect ChatGPT replies, or download files. Copy the text, paste it into your chat, and send it yourself.</p>
+<label for="prompt">Prepared text to send</label>
+<textarea id="prompt" readonly spellcheck="false" placeholder="Prepare a session diff in the local dashboard, then reopen this session."></textarea>
+<div class="row"><button id="copy" type="button">Copy prompt</button><button id="chat" class="secondary" type="button">Focus chat</button><button id="confirm" class="secondary" type="button">I sent this prompt</button></div>
+<label for="patch-url">After the assistant responds, optionally paste its HTTPS patch download link</label>
+<input id="patch-url" type="url" placeholder="https://…/patch.zip" autocomplete="off" spellcheck="false">
+<div class="row"><button id="responded" type="button" class="secondary">Mark response received</button></div>
+<a id="download" rel="noopener noreferrer" target="_blank">Open patch download link (manual)</a>
+<p class="note">! Ready means a prompt is prepared. ! Sent means awaiting your confirmation. ! Responded means you manually marked it complete. If ChatGPT provides a sandbox: link, download the file in ChatGPT itself instead of pasting that path here. File links may expire.</p>
+<p id="message" role="status" aria-live="polite"></p><p id="error" role="alert"></p>
+<script src="session-preview.js"></script>
+</body></html>

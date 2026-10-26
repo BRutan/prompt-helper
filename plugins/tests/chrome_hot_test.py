@@ -36,6 +36,26 @@ class ChromeHotTests(unittest.TestCase):
             with __import__('zipfile').ZipFile(archive) as bundle:
                 self.assertIn('build.json', bundle.namelist())
                 self.assertIn('build-watch.js', bundle.namelist())
+                self.assertIn('session-preview.html', bundle.namelist())
+                self.assertIn('session-preview.js', bundle.namelist())
+                for retired in chrome_live.RETIRED_AUTOMATION_FILES:
+                    self.assertNotIn(retired, bundle.namelist())
+
+    def test_build_retires_old_automation_modules_without_touching_other_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            destination = Path(tmp)
+            unpacked = destination / chrome_live.EXTENSION_FOLDER
+            unpacked.mkdir()
+            for name in chrome_live.RETIRED_AUTOMATION_FILES:
+                (unpacked / name).write_text('unsafe legacy automation')
+            preserved = unpacked / 'user-custom-file'
+            preserved.write_text('keep this')
+            chrome_live.build(destination)
+            self.assertEqual(preserved.read_text(), 'keep this')
+            for name in chrome_live.RETIRED_AUTOMATION_FILES:
+                self.assertFalse((unpacked / name).exists(), name)
+            self.assertTrue((unpacked / 'session-preview.html').is_file())
+            self.assertTrue((unpacked / 'session-preview.js').is_file())
 
     def test_profile_detection_reads_preferences_without_editing_them(self):
         with tempfile.TemporaryDirectory() as tmp:

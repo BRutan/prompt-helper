@@ -15,7 +15,7 @@ SOURCE = ROOT / 'plugins' / 'chrome'
 DEFAULT_OUT = ROOT / 'dist' / 'chrome'
 REQUIRED = (
     'manifest.json', 'session.js', 'background.js', 'build-watch.js',
-    'content.js', 'delivery-content.js', 'response-monitor.js', 'session-media-upload.js',
+    'session-preview.html', 'session-preview.js',
     'dashboard-bridge.js', 'popup.html', 'popup.js', 'package.json',
     'runtime-config.js', 'session-layout.js', 'session-arrangement.js',
     'open-sessions.js', 'symbol-compression.js',

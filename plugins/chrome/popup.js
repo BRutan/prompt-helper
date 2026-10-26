@@ -1,5 +1,5 @@
 // Path: plugins/chrome/popup.js
-// Navigation-only popup. Diffs are processed in background and never rendered here.
+// Session selection opens an extension-owned, manual-only prompt preview.
 const $ = id => document.getElementById(id);
 const name = {chatgpt:'ChatGPT',claude:'Claude'};
 let view = 'home';
@@ -45,9 +45,17 @@ function renderSessions(sessions) {
       const button = document.createElement('button'); button.className='session'; button.type='button'; button.setAttribute('role','listitem');
       const title = document.createElement('span');title.className='name';title.textContent=entry.title || `${name[provider]} conversation`;
       const detail = document.createElement('small');detail.textContent=`${entry.conversation_id || 'New / unsaved conversation'} · Window ${entry.window_id}${entry.active?' · Active':''}`;
+      const state=entry.manual_status || 'none';
+      if(['ready','sent','responded'].includes(state)) {
+        const flag=document.createElement('span'); flag.className='session-flag'; flag.textContent='!';
+        flag.title=state==='ready'?'Prompt ready to copy':state==='sent'?'Awaiting manual response confirmation':'Response manually confirmed';
+        title.append(' ',flag);
+        detail.textContent+=` · ${state==='ready'?'Prompt ready!':state==='sent'?'Waiting for response!':'Responded!'}`;
+      }
       button.append(title,detail);
       button.addEventListener('click',async()=>{
-        try { clearError(); await call({type:'focus-session',tab_id:entry.tab_id}); }
+        try { clearError(); if (entry.unsaved) throw Error('Start a saved conversation before preparing a prompt.');
+          await call({type:'open-session-preview',provider:entry.provider,conversation_id:entry.conversation_id,tab_id:entry.tab_id}); }
         catch(error) { showError(error); }
       });
       list.append(button);
@@ -75,7 +83,7 @@ async function init() {
     enabled = config.enabled !== false;
     showToggle();
     $('minimum').value = config.minChars;
-    $('replace').checked = config.replaceOnPaste;
+
     $('symbol-compression').checked = Boolean(config.symbolCompression);
     $('aggregate-session-media').checked = Boolean(config.aggregateSessionMedia);
     $('session-media-folder').value = config.sessionMediaFolder || '';
@@ -128,7 +136,7 @@ $('choose-session-media-folder').addEventListener('click',async()=>{
 $('save').addEventListener('click',async()=>{
   try {
     await call({type:'set-options',minChars:Number($('minimum').value),
-      replaceOnPaste:$('replace').checked,symbolCompression:$('symbol-compression').checked,
+      replaceOnPaste:false,symbolCompression:$('symbol-compression').checked,
       aggregateSessionMedia:$('aggregate-session-media').checked,
       sessionMediaFolder:$('session-media-folder').value});
     $('settings-status').textContent='Settings saved.';clearError();

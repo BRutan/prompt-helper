@@ -39,6 +39,7 @@
   .session{display:block;text-align:left;width:100%;margin:0;background:#18263a;border:1px solid #3c526f;color:#eff6ff;overflow:hidden}
   .session:hover,.session:focus-visible{background:#29415f}
   .session .name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+  .session-flag{background:#eab95e;color:#172034;border-radius:50%;padding:1px 6px;font-weight:800;margin-left:6px}
   .session small{display:block;color:#afc1d5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:4px}
   .session-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
   .muted{color:#a6b7cd;font-size:12px}
@@ -62,7 +63,7 @@
     <div class="count"><strong id="chatgpt-count">0</strong><span>ChatGPT sessions</span></div>
     <div class="count"><strong id="claude-count">0</strong><span>Claude sessions</span></div>
   </div>
-  <p class="muted">Select a conversation to focus its existing tab and window.</p>
+  <p class="muted">Select a saved conversation to open its manual prompt window. An ! indicates a ready prompt or a response you have confirmed.</p>
   <div class="session-actions">
     <button id="refresh-sessions" class="secondary" type="button">Refresh</button>
     <button id="arrange-sessions" type="button">Arrange sessions</button>
@@ -73,7 +74,6 @@
   <div class="subhead"><button id="settings-back" class="back" type="button">← Back</button><h2>Settings</h2></div>
   <div class="form-fields">
     <label class="field-label" for="minimum">Minimum source characters<input id="minimum" type="number" min="100" max="1000000"></label>
-    <label class="check-label"><input id="replace" type="checkbox"> Replace eligible pasted source automatically</label>
     <label class="check-label"><input id="symbol-compression" type="checkbox"> Code symbol compression by dialect (Git patches)</label>
     <label class="check-label"><input id="aggregate-session-media" type="checkbox"> Aggregate Session Media (macOS screenshots and screen recordings)</label>
     <label class="field-label" for="session-media-folder">Session Media folder

@@ -1,22 +1,15 @@
 {
   "manifest_version": 3,
   "name": "prompt-helper: Session Patches",
-  "version": "0.3.0",
-  "description": "Tracks completed AI replies and applies downloaded Git patches to selected local repositories.",
+  "version": "0.4.0",
+  "description": "Manual session prompt preview and Git diff preparation; no ChatGPT response monitoring or automated submission.",
   "permissions": [
-    "activeTab",
     "tabs",
-    "scripting",
     "storage",
     "alarms",
-    "clipboardWrite",
-    "downloads",
     "nativeMessaging"
   ],
   "host_permissions": [
-    "https://chatgpt.com/*",
-    "https://chat.openai.com/*",
-    "https://claude.ai/*",
     "http://127.0.0.1/*",
     "http://localhost/*"
   ],
@@ -25,21 +18,6 @@
     "type": "module"
   },
   "content_scripts": [
-    {
-      "matches": [
-        "https://chatgpt.com/*",
-        "https://chat.openai.com/*",
-        "https://claude.ai/*"
-      ],
-      "js": [
-        "content.js",
-        "delivery-content.js",
-        "response-monitor.js",
-        "session-media-upload.js"
-      ],
-      "run_at": "document_idle",
-      "all_frames": false
-    },
     {
       "matches": [
         "http://127.0.0.1/*",

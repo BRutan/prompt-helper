@@ -117,7 +117,7 @@ test('popup toggle disables processing but retains navigation',async()=>{
   const sender={tab:{id:1,active:true,windowId:10,url:'https://chatgpt.com/c/chat-a'},url:'https://chatgpt.com/c/chat-a'};
   const disabled=await new Promise(resolve=>handler({type:'process-source',content:'// Path: src/x.js\n'+('x'.repeat(1300))},sender,resolve));
   assert.equal(disabled.ok,false);
-  assert.match(disabled.error,/turned off/);
+  assert.match(disabled.error,/Unknown message type/);
   assert.equal((await send('get-open-sessions')).ok,true);
   await send('set-enabled',{enabled:true});
   const legacy=await send('load-session');
